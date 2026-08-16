@@ -1,0 +1,8 @@
+#!/bin/sh
+# 本地提交后自动推送到 origin 上对应的上游分支。
+# 新分支如果没有设置 upstream 会跳过，不会报错。
+branch=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
+if ! git rev-parse --abbrev-ref --symbolic-full-name "@{u}" >/dev/null 2>&1; then
+  exit 0
+fi
+git push origin "$branch"
