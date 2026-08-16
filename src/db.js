@@ -70,6 +70,12 @@ const nodeColumns = db.prepare('PRAGMA table_info(nodes)').all();
 if (!nodeColumns.some((column) => column.name === 'role')) {
   db.exec("ALTER TABLE nodes ADD COLUMN role TEXT NOT NULL DEFAULT 'inbound'");
 }
+if (!nodeColumns.some((column) => column.name === 'method')) {
+  db.exec("ALTER TABLE nodes ADD COLUMN method TEXT NOT NULL DEFAULT 'aes-256-gcm'");
+}
+if (!nodeColumns.some((column) => column.name === 'ss_network')) {
+  db.exec("ALTER TABLE nodes ADD COLUMN ss_network TEXT NOT NULL DEFAULT 'tcp'");
+}
 
 const now = () => new Date().toISOString();
 
@@ -199,20 +205,22 @@ export function getNode(id) {
 }
 
 function normalizeClients(input) {
+  const VMESS_SECURITIES = ['auto', 'aes-128-gcm', 'chacha20-poly1305'];
   const clients = Array.isArray(input) && input.length > 0
     ? input.map((client) => ({
         email: String(client.email || '').trim(),
         secret: String(client.secret || '').trim(),
-        flow: String(client.flow || '').trim()
+        flow: String(client.flow || '').trim(),
+        security: VMESS_SECURITIES.includes(client.security) ? client.security : 'auto'
       }))
-    : [{ email: '', secret: newId(), flow: '' }];
+    : [{ email: '', secret: newId(), flow: '', security: 'auto' }];
   return clients.map((client) => ({
     ...client,
     secret: client.secret || newId(),
-    flow: client.flow || ''
+    flow: client.flow || '',
+    security: client.security || 'auto'
   }));
 }
-
 export function saveNode(input, id = null) {
   const existing = id ? getNode(id) : null;
   const timestamp = now();
@@ -221,6 +229,18 @@ export function saveNode(input, id = null) {
   const network = String(input.network || 'tcp').trim();
   const security = String(input.security || 'none').trim();
   const port = Number(input.port);
+  const SS_METHODS = [
+    'aes-128-gcm',
+    'aes-256-gcm',
+    'chacha20-poly1305',
+    'chacha20-ietf-poly1305',
+    'xchacha20-ietf-poly1305',
+    '2022-blake3-aes-128-gcm',
+    '2022-blake3-aes-256-gcm',
+    '2022-blake3-chacha20-poly1305'
+  ];
+  const method = protocol === 'shadowsocks' && SS_METHODS.includes(String(input.method || '')) ? String(input.method) : 'aes-256-gcm';
+  const ssNetwork = protocol === 'shadowsocks' && ['tcp', 'udp', 'tcp,udp'].includes(String(input.ss_network || '')) ? String(input.ss_network) : 'tcp';
 
   if (!['vmess', 'vless', 'trojan', 'shadowsocks', 'socks'].includes(protocol)) {
     const error = new Error('unsupported protocol');
@@ -250,6 +270,8 @@ export function saveNode(input, id = null) {
     network,
     security,
     port,
+    method,
+    ss_network: ssNetwork,
     sni: String(input.sni || input.server_name || '').trim(),
     path: String(input.path || '').trim(),
     cert_file: String(input.cert_file || '').trim(),
@@ -276,15 +298,15 @@ export function saveNode(input, id = null) {
     db.prepare(`
       UPDATE nodes SET
         server_id = ?, name = ?, protocol = ?, role = ?, port = ?, network = ?,
-        security = ?, sni = ?, path = ?, cert_file = ?, key_file = ?,
-        dest = ?, server_names = ?, private_key = ?, short_ids = ?,
-        public_key = ?,
+        security = ?, method = ?, ss_network = ?, sni = ?, path = ?,
+        cert_file = ?, key_file = ?, dest = ?, server_names = ?, private_key = ?,
+        short_ids = ?, public_key = ?,
         clients_json = ?, enabled = ?, updated_at = ?
       WHERE id = ?
     `).run(existing.server_id, data.name, data.protocol, data.role, data.port, data.network,
-      data.security, data.sni, data.path, data.cert_file, data.key_file,
-      data.dest, data.server_names, data.private_key, data.short_ids,
-      data.public_key,
+      data.security, data.method, data.ss_network, data.sni, data.path,
+      data.cert_file, data.key_file, data.dest, data.server_names, data.private_key,
+      data.short_ids, data.public_key,
       data.clients_json, data.enabled, timestamp, id);
     return getNode(id);
   }
@@ -292,15 +314,15 @@ export function saveNode(input, id = null) {
   const nodeId = newId();
   db.prepare(`
     INSERT INTO nodes
-      (id, server_id, name, protocol, role, port, network, security, sni, path,
-       cert_file, key_file, dest, server_names, private_key, short_ids,
-       public_key,
+      (id, server_id, name, protocol, role, port, network, security, method,
+       ss_network, sni, path, cert_file, key_file, dest, server_names,
+       private_key, short_ids, public_key,
        clients_json, enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(nodeId, input.server_id, data.name, data.protocol, data.role, data.port, data.network,
-    data.security, data.sni, data.path, data.cert_file, data.key_file,
-    data.dest, data.server_names, data.private_key, data.short_ids,
-    data.public_key,
+    data.security, data.method, data.ss_network, data.sni, data.path,
+    data.cert_file, data.key_file, data.dest, data.server_names,
+    data.private_key, data.short_ids, data.public_key,
     data.clients_json, data.enabled, timestamp, timestamp);
   return getNode(nodeId);
 }

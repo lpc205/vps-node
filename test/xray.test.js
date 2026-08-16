@@ -186,6 +186,47 @@ test('builds socks5 inbound and share link', () => {
   assert.equal(link.link, 'socks://u1:pass1@203.0.113.10:1080#socks1');
 });
 
+test('vmess security and shadowsocks method flow into config and links', () => {
+  const vmess = {
+    id: 'v1',
+    name: 'vmess1',
+    protocol: 'vmess',
+    port: 8443,
+    network: 'ws',
+    security: 'tls',
+    sni: 'example.com',
+    path: '/ws',
+    cert_file: '/etc/ssl/fullchain.pem',
+    key_file: '/etc/ssl/privkey.pem',
+    enabled: 1,
+    clients: [{ email: 'u1', secret: 'uuid-1', flow: '', security: 'chacha20-poly1305' }]
+  };
+  const config = buildXrayConfig([vmess]);
+  assert.equal(config.inbounds[0].settings.clients[0].security, 'chacha20-poly1305');
+  const [vmessLink] = nodeLinks(vmess, { host: '203.0.113.10' });
+  const vmessPayload = JSON.parse(Buffer.from(vmessLink.link.slice('vmess://'.length), 'base64url').toString());
+  assert.equal(vmessPayload.scy, 'chacha20-poly1305');
+
+  const ss = {
+    id: 's1',
+    name: 'ss1',
+    protocol: 'shadowsocks',
+    port: 8388,
+    network: 'tcp',
+    security: 'none',
+    method: 'chacha20-ietf-poly1305',
+    ss_network: 'tcp,udp',
+    enabled: 1,
+    clients: [{ email: 'u1', secret: 'ss-pass', flow: '' }]
+  };
+  const ssConfig = buildXrayConfig([ss]);
+  assert.equal(ssConfig.inbounds[0].settings.method, 'chacha20-ietf-poly1305');
+  assert.equal(ssConfig.inbounds[0].settings.network, 'tcp,udp');
+  const [ssLink] = nodeLinks(ss, { host: '203.0.113.10' });
+  const [, ssUserinfo] = ssLink.link.match(/^ss:\/\/([^@]+)@/);
+  assert.equal(Buffer.from(ssUserinfo, 'base64url').toString(), 'chacha20-ietf-poly1305:ss-pass');
+});
+
 test('buildXrayConfig adds routed outbound and inbound routing rule', () => {
   const inbound = {
     id: 'in1',

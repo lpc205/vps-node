@@ -696,10 +696,18 @@ textarea {
 
 .client-row {
   display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr) minmax(0, 0.7fr) auto;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr) auto;
   gap: 8px;
   align-items: end;
   padding-bottom: 10px;
+}
+
+.client-row.cols-4 {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr) minmax(0, 0.7fr) auto;
+}
+
+.client-row input, .client-row select {
+  min-width: 0;
 }
 
 .share-list {

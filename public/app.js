@@ -25,6 +25,17 @@ const REALITY_PRESETS = [
   { name: 'GitHub', dest: 'github.com:443', serverNames: 'github.com', sni: 'github.com' }
 ];
 
+const SS_METHODS = [
+  'aes-128-gcm',
+  'aes-256-gcm',
+  'chacha20-poly1305',
+  'chacha20-ietf-poly1305',
+  'xchacha20-ietf-poly1305',
+  '2022-blake3-aes-128-gcm',
+  '2022-blake3-aes-256-gcm',
+  '2022-blake3-chacha20-poly1305'
+];
+
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (char) => ({
     '&': '&amp;',
@@ -513,7 +524,9 @@ function openServerModal(server = null) {
 
 function openNodeModal(serverId, node = null) {
   const isEdit = Boolean(node);
-  const clients = node?.clients?.length ? node.clients : [{ email: '', secret: '', flow: '' }];
+  const clients = node?.clients?.length
+    ? node.clients.map((client) => ({ ...client, security: client.security || 'auto' }))
+    : [{ email: '', secret: '', flow: '', security: 'auto' }];
   const security = node?.security || 'none';
   const network = node?.network || 'tcp';
 
@@ -548,6 +561,22 @@ function openNodeModal(serverId, node = null) {
             <div class="field">
               <label>端口</label>
               <input name="port" type="number" min="1" max="65535" required value="${escapeHtml(node?.port || '')}" placeholder="443">
+            </div>
+            <div class="field full ss-field" style="display:none">
+              <label>加密方式</label>
+              <select name="method">
+                ${SS_METHODS.map((item) => `
+                  <option value="${item}" ${(node?.method || 'aes-256-gcm') === item ? 'selected' : ''}>${escapeHtml(item)}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="field full ss-field" style="display:none">
+              <label>网络</label>
+              <select name="ss_network">
+                ${['tcp', 'udp', 'tcp,udp'].map((item) => `
+                  <option value="${item}" ${(node?.ss_network || 'tcp') === item ? 'selected' : ''}>${escapeHtml(item.toUpperCase())}</option>
+                `).join('')}
+              </select>
             </div>
             <div class="field">
               <label>传输</label>
@@ -607,11 +636,11 @@ function openNodeModal(serverId, node = null) {
               <input name="short_ids" value="${escapeHtml(node?.short_ids || '')}" placeholder="可选，逗号分隔">
             </div>
             <div class="field full">
-              <label>SNI / serverName</label>
+              <label id="sni-label">SNI / serverName</label>
               <input name="sni" value="${escapeHtml(node?.sni || '')}" placeholder="域名或目标站点">
             </div>
             <div class="field full path-field" style="${network === 'tcp' ? 'display:none' : ''}">
-              <label>路径 / serviceName</label>
+              <label id="path-label">路径 / serviceName</label>
               <input name="path" value="${escapeHtml(node?.path || '')}" placeholder="例如 /ws 或 grpc">
             </div>
             <div class="field full">
@@ -635,12 +664,34 @@ function openNodeModal(serverId, node = null) {
   `);
 
   const initialClients = clients.map((client) => ({ ...client }));
+  function clientFieldCount() {
+    const protocol = $('select[name="protocol"]')?.value;
+    if (protocol === 'vmess') return 4;
+    if (protocol === 'vless' && $('select[name="security"]')?.value === 'reality') return 4;
+    return 3;
+  }
   function clientRowFieldsHtml(client) {
-    const socks = $('select[name="protocol"]')?.value === 'socks';
+    const protocol = $('select[name="protocol"]')?.value;
+    const isSocks = protocol === 'socks';
+    const isVmess = protocol === 'vmess';
+    const isVlessReality = protocol === 'vless' && $('select[name="security"]')?.value === 'reality';
+    const secretPlaceholder = isSocks || protocol === 'trojan' || protocol === 'shadowsocks' ? '密码' : 'UUID';
+    const flow = isVlessReality ? (client.flow || 'xtls-rprx-vision') : '';
     return `
-        <input name="client_email" placeholder="${socks ? '用户名' : '备注'}" value="${escapeHtml(client.email)}">
-        <input name="client_secret" placeholder="${socks ? '密码' : 'UUID / 密码'}" value="${escapeHtml(client.secret)}" required>
-        <input name="client_flow" placeholder="flow" value="${escapeHtml(client.flow)}" ${socks ? 'style="display:none"' : ''}>
+        <input name="client_email" placeholder="${isSocks ? '用户名' : '备注'}" value="${escapeHtml(client.email)}">
+        <input name="client_secret" placeholder="${secretPlaceholder}" value="${escapeHtml(client.secret)}" required>
+        ${isVmess ? `
+        <select name="client_security">
+          ${['auto', 'aes-128-gcm', 'chacha20-poly1305'].map((item) => `
+            <option value="${item}" ${(client.security || 'auto') === item ? 'selected' : ''}>${escapeHtml(item)}</option>
+          `).join('')}
+        </select>` : ''}
+        ${isVlessReality ? `
+        <select name="client_flow">
+          ${['xtls-rprx-vision', 'xtls-rprx-vision-udp443', ''].map((item) => `
+            <option value="${item}" ${flow === item ? 'selected' : ''}>${item ? escapeHtml(item) : '无'}</option>
+          `).join('')}
+        </select>` : ''}
     `;
   }
   function renderClientRows() {
@@ -649,11 +700,12 @@ function openNodeModal(serverId, node = null) {
       ? rows.map((row) => ({
         email: row.querySelector('[name="client_email"]').value,
         secret: row.querySelector('[name="client_secret"]').value,
-        flow: row.querySelector('[name="client_flow"]').value
+        flow: row.querySelector('[name="client_flow"]')?.value || '',
+        security: row.querySelector('[name="client_security"]')?.value || 'auto'
       }))
       : initialClients;
-    $('#clients-editor').innerHTML = values.map((client, index) => `
-      <div class="client-row">
+    $('#clients-editor').innerHTML = values.map((client) => `
+      <div class="client-row cols-${clientFieldCount()}">
         ${clientRowFieldsHtml(client)}
         <button type="button" class="icon-btn" data-remove-client title="移除" aria-label="移除"><i data-lucide="x"></i></button>
       </div>
@@ -664,11 +716,20 @@ function openNodeModal(serverId, node = null) {
   renderClientRows();
 
   function applyProtocolVisibility(protocol) {
-    const socks = protocol === 'socks';
+    const isSocks = protocol === 'socks';
+    const isSs = protocol === 'shadowsocks';
+    const network = $('select[name="network"]')?.value || 'tcp';
+    const security = $('select[name="security"]')?.value || 'none';
     const networkField = $('select[name="network"]').closest('.field');
     const securityField = $('select[name="security"]').closest('.field');
     const sniField = $('input[name="sni"]').closest('.field');
-    if (socks) {
+    const sniLabel = $('#sni-label');
+    const pathLabel = $('#path-label');
+    const pathField = $('.path-field');
+
+    $$('.ss-field').forEach((field) => field.style.display = isSs ? '' : 'none');
+
+    if (isSocks || isSs) {
       $('select[name="network"]').value = 'tcp';
       $('select[name="security"]').value = 'none';
       $('input[name="sni"]').value = '';
@@ -680,16 +741,23 @@ function openNodeModal(serverId, node = null) {
       networkField.style.display = 'none';
       securityField.style.display = 'none';
       sniField.style.display = 'none';
-      $('.path-field').style.display = 'none';
+      if (pathField) pathField.style.display = 'none';
       $$('.tls-field').forEach((field) => field.style.display = 'none');
       $$('.reality-field').forEach((field) => field.style.display = 'none');
       return;
     }
+
     networkField.style.display = '';
     securityField.style.display = '';
-    sniField.style.display = '';
-    $('.path-field').style.display = $('select[name="network"]').value === 'tcp' ? 'none' : '';
-    const security = $('select[name="security"]').value;
+    const showSni = security !== 'none' || network !== 'tcp';
+    sniField.style.display = showSni ? '' : 'none';
+    if (sniLabel) {
+      sniLabel.textContent = network !== 'tcp' && security === 'none' ? 'Host / 伪装域名' : 'SNI / serverName';
+    }
+    if (pathLabel) {
+      pathLabel.textContent = network === 'grpc' ? 'serviceName' : network === 'ws' || network === 'httpupgrade' ? '路径 / Host' : '路径';
+    }
+    if (pathField) pathField.style.display = network === 'tcp' ? 'none' : '';
     $$('.tls-field').forEach((field) => field.style.display = security === 'tls' ? '' : 'none');
     $$('.reality-field').forEach((field) => field.style.display = security === 'reality' ? '' : 'none');
   }
@@ -781,7 +849,14 @@ function openNodeModal(serverId, node = null) {
   const networkSelect = $('select[name="network"]');
   const protocolSelect = $('select[name="protocol"]');
   securitySelect.addEventListener('change', () => applyProtocolVisibility(protocolSelect.value));
-  networkSelect.addEventListener('change', () => applyProtocolVisibility(protocolSelect.value));
+  securitySelect.addEventListener('change', () => {
+    applyProtocolVisibility(protocolSelect.value);
+    if (protocolSelect.value === 'vless') renderClientRows();
+  });
+  networkSelect.addEventListener('change', () => {
+    applyProtocolVisibility(protocolSelect.value);
+    if (protocolSelect.value === 'vless') renderClientRows();
+  });
   protocolSelect.addEventListener('change', () => {
     applyProtocolVisibility(protocolSelect.value);
     renderClientRows();
@@ -796,8 +871,11 @@ function openNodeModal(serverId, node = null) {
     data.clients = $$('#clients-editor .client-row').map((row) => ({
       email: row.querySelector('[name="client_email"]').value,
       secret: row.querySelector('[name="client_secret"]').value,
-      flow: row.querySelector('[name="client_flow"]').value
+      flow: row.querySelector('[name="client_flow"]')?.value || '',
+      security: row.querySelector('[name="client_security"]')?.value || 'auto'
     }));
+    data.method = form.querySelector('[name="method"]')?.value || 'aes-256-gcm';
+    data.ss_network = form.querySelector('[name="ss_network"]')?.value || 'tcp';
     data.server_id = serverId;
     try {
       let saved;

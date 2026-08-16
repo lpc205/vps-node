@@ -114,7 +114,7 @@ function buildOutbound(node, server) {
       if (node.security === 'reality') user.flow = client.flow || 'xtls-rprx-vision';
     } else {
       user.alterId = 0;
-      user.security = 'auto';
+      user.security = client.security || 'auto';
     }
     settings.vnext = [{ address, port, users: [user] }];
   }
@@ -122,7 +122,7 @@ function buildOutbound(node, server) {
     settings.servers = [{ address, port, password: client.secret, level: 0 }];
   }
   if (protocol === 'shadowsocks') {
-    settings.servers = [{ address, port, method: 'aes-256-gcm', password: client.secret, level: 0 }];
+    settings.servers = [{ address, port, method: node.method || 'aes-256-gcm', password: client.secret, level: 0 }];
   }
   if (protocol === 'socks') {
     settings.servers = [{ address, port, users: [{ user: client.email || 'user', pass: client.secret }] }];
@@ -151,7 +151,8 @@ function buildInbound(node) {
       id: client.secret,
       email: client.email || '',
       level: 0,
-      alterId: 0
+      alterId: 0,
+      security: client.security || 'auto'
     }));
   }
 
@@ -163,10 +164,10 @@ function buildInbound(node) {
   }
 
   if (node.protocol === 'shadowsocks') {
-    const method = 'aes-256-gcm';
+    const method = node.method || 'aes-256-gcm';
     settings.method = method;
     settings.password = clients[0]?.secret || '';
-    settings.network = node.network;
+    settings.network = node.ss_network || 'tcp';
     settings.clients = clients.map((client) => ({
       email: client.email || '',
       method,
@@ -263,7 +264,7 @@ export function nodeLinks(node, server) {
         port: Number(node.port),
         id: client.secret,
         aid: '0',
-        scy: 'auto',
+        scy: client.security || 'auto',
         net: network,
         type: 'none',
         host: node.sni || host,
@@ -303,7 +304,7 @@ export function nodeLinks(node, server) {
     }
 
     if (node.protocol === 'shadowsocks') {
-      const method = 'aes-256-gcm';
+      const method = node.method || 'aes-256-gcm';
       const userinfo = Buffer.from(`${method}:${client.secret}`).toString('base64url');
       link = `ss://${userinfo}@${host}:${node.port}#${remark}`;
     }
