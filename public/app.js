@@ -719,7 +719,7 @@ function openNodeModal(serverId, node = null) {
     const isSocks = protocol === 'socks';
     const isSs = protocol === 'shadowsocks';
     const network = $('select[name="network"]')?.value || 'tcp';
-    const security = $('select[name="security"]')?.value || 'none';
+    let security = $('select[name="security"]')?.value || 'none';
     const networkField = $('select[name="network"]').closest('.field');
     const securityField = $('select[name="security"]').closest('.field');
     const sniField = $('input[name="sni"]').closest('.field');
@@ -728,6 +728,14 @@ function openNodeModal(serverId, node = null) {
     const pathField = $('.path-field');
 
     $$('.ss-field').forEach((field) => field.style.display = isSs ? '' : 'none');
+
+    const realityOption = $('select[name="security"] option[value="reality"]');
+    const canReality = (protocol === 'vless' || protocol === 'trojan') && network !== 'ws';
+    if (realityOption) realityOption.disabled = !canReality;
+    if (security === 'reality' && !canReality) {
+      $('select[name="security"]').value = 'none';
+      security = 'none';
+    }
 
     if (isSocks || isSs) {
       $('select[name="network"]').value = 'tcp';

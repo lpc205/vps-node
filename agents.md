@@ -135,7 +135,7 @@ docker-compose.yml
 
 1. “节点”页选择目标服务器。
 2. 添加节点：选择协议、角色、端口、传输、安全等字段。
-   - 表单会按协议显示对应字段：VMess 显示客户端加密方式；VLESS + Reality 显示 flow；Shadowsocks 显示加密方式和 TCP/UDP 网络；SOCKS5 只保留用户名/密码。
+   - 表单会按协议显示对应字段：VMess 显示客户端加密方式；VLESS / Trojan + Reality 显示 flow（仅 VLESS）；Shadowsocks 显示加密方式和 TCP/UDP 网络；SOCKS5 只保留用户名/密码。
 3. 节点可配置多个客户端，客户端 secret 自动生成。
 4. 点击“部署全部节点”：调用 `/api/servers/:id/deploy`，流程为安装 Xray → 写入 config → 重启 → 查询状态。
 5. 部署期间显示进度弹窗，完成后显示结果弹窗。
@@ -207,6 +207,7 @@ docker compose up -d --build
 - 部署使用 base64 传输 `config.json`，避免 SSH 脚本转义问题。
 - 路由配置在 `buildXrayConfig` 中按 `routes` 生成 `outbound` 与 routing rule；同一入站只能有一条 route。
 - 节点表单按协议动态显隐字段：Shadowsocks 不显示传输/安全/SNI/路径，改用 `method` 与 `ss_network`；VMess 客户端有 `security`；VLESS 只在 Reality 时显示 flow。
+- Reality 仅对 VLESS / Trojan 且传输不为 WS 可用；VMess 与 WS 组合会被表单禁用并在后端拒绝。
 
 ## 安全与边界
 
