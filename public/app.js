@@ -3,6 +3,8 @@ const state = {
   nodes: [],
   routes: [],
   probes: {},
+  statuses: {},
+  autoRepairNotified: new Set(),
   selectedInboundId: null,
   selectedOutboundId: null,
   selectedServerId: null,
@@ -168,8 +170,9 @@ function emptyState(text) {
   return `<div class="empty-state">${escapeHtml(text)}</div>`;
 }
 
-function badge(text, tone = '') {
-  return `<span class="badge ${tone}">${escapeHtml(text)}</span>`;
+function badge(text, tone = '', title = '') {
+  const attrs = title ? ` title="${escapeHtml(title)}"` : '';
+  return `<span class="badge ${tone}"${attrs}>${escapeHtml(text)}</span>`;
 }
 
 function protocolLabel(protocol) {
@@ -180,6 +183,59 @@ function protocolLabel(protocol) {
     shadowsocks: 'Shadowsocks',
     socks: 'SOCKS5'
   }[protocol] || protocol;
+}
+
+const STATUS_META = {
+  running: { label: '在线运行', tone: 'green' },
+  service_stopped: { label: '服务停止', tone: 'amber' },
+  offline: { label: '离线', tone: 'red' },
+  config_mismatch: { label: '配置不一致', tone: 'amber' },
+  config_missing: { label: '配置缺失', tone: 'red' },
+  binary_missing: { label: '二进制缺失', tone: 'red' },
+  ports_down: { label: '端口未监听', tone: 'amber' },
+  unknown: { label: '未知', tone: 'muted' }
+};
+
+function statusMeta(state) {
+  return STATUS_META[state] || STATUS_META.unknown;
+}
+
+function statusDot(state, titleExtra = '') {
+  const meta = statusMeta(state);
+  const title = `${meta.label}${titleExtra ? ` · ${titleExtra}` : ''}`;
+  return `<span class="status-dot ${meta.tone}" title="${escapeHtml(title)}" aria-label="${escapeHtml(meta.label)}"></span>`;
+}
+
+function statusPill(state, titleExtra = '') {
+  const meta = statusMeta(state);
+  const title = `${meta.label}${titleExtra ? ` · ${titleExtra}` : ''}`;
+  return `<span class="status-pill ${meta.tone}" title="${escapeHtml(title)}"><span class="status-dot ${meta.tone}"></span>${escapeHtml(meta.label)}</span>`;
+}
+
+function nodeLiveState(serverItem, node) {
+  const state = serverItem?.state || 'unknown';
+  if (['offline', 'binary_missing', 'config_missing', 'config_mismatch', 'service_stopped', 'ports_down'].includes(state)) return state;
+  if (state !== 'running') return 'unknown';
+  const nodeStatus = serverItem?.nodes?.find((item) => item.id === node.id);
+  if (!nodeStatus) return 'unknown';
+  if (!nodeStatus.in_config) return 'config_missing';
+  if (!nodeStatus.listening) return 'ports_down';
+  return 'running';
+}
+
+const REPAIR_SUMMARIES = {
+  service_stopped: '仅启动/重启 Xray 服务，不写入或覆盖 config.json',
+  config_missing: '重新生成 config.json 并写入服务器，然后重启 Xray',
+  config_mismatch: '用面板期望配置覆盖 config.json，然后重启 Xray',
+  binary_missing: '重新下载并安装 Xray 二进制，写入配置后重启'
+};
+
+function isAutoRepairEnabled() {
+  return localStorage.getItem('auto_repair_enabled') === '1';
+}
+
+function setAutoRepairEnabled(value) {
+  localStorage.setItem('auto_repair_enabled', value ? '1' : '0');
 }
 
 async function loadAll() {
@@ -201,9 +257,31 @@ async function loadAll() {
       state.selectedServerId = servers[0]?.id || null;
     }
     renderAll();
+    loadStatus();
   } catch (error) {
     toast(error.message, 'error');
   }
+}
+
+async function loadStatus() {
+  try {
+    const payload = await api('/api/status');
+    state.statuses = Object.fromEntries(payload.servers.map((item) => [item.server.id, item]));
+    if (isAutoRepairEnabled()) {
+      for (const item of payload.servers) {
+        if (item.state === 'service_stopped' && item.server && !state.autoRepairNotified.has(item.server.id)) {
+          state.autoRepairNotified.add(item.server.id);
+          toast(`检测到「${item.server.name}」服务停止，等待确认修复`, 'info');
+          openRepairConfirmModal(item.server, item.drift, item.drift_reason);
+          break;
+        }
+      }
+    }
+    renderOverview();
+    renderServers();
+    renderNodes();
+    refreshIcons();
+  } catch { /* keep last known status on transient errors */ }
 }
 
 function renderAll() {
@@ -223,9 +301,10 @@ function renderOverview() {
   $('#overview-nodes').innerHTML = recent.length
     ? recent.map((node) => {
         const server = state.servers.find((item) => item.id === node.server_id);
+        const live = server ? state.statuses[server.id] : null;
         return `
           <div class="overview-row" data-node-id="${escapeHtml(node.id)}">
-            <span class="name">${escapeHtml(node.name)}</span>
+            <span class="name">${statusDot(live?.state || 'unknown', live?.status?.last_error || '')}${escapeHtml(node.name)}</span>
             <span class="muted">${escapeHtml(server ? `${server.name} · ${server.host}` : '未知服务器')}</span>
             <span class="muted">${escapeHtml(protocolLabel(node.protocol))} / ${escapeHtml(node.port)}</span>
             ${node.enabled === 1 ? badge('启用', 'green') : badge('停用')}
@@ -244,13 +323,9 @@ function renderServers() {
   grid.innerHTML = state.servers.map((server) => {
     const probe = state.probes[server.id];
     const nodeCount = state.nodes.filter((node) => node.server_id === server.id).length;
-    const statusBadge = probe
-      ? probe.xray?.active === 'active'
-        ? badge('运行中', 'green')
-        : probe.xray?.installed
-          ? badge('已安装', 'amber')
-          : badge('未安装', 'red')
-      : badge('未检测');
+    const live = state.statuses[server.id];
+    const statusBadge = live ? statusPill(live.state, live.status?.last_error || '') : statusPill('unknown');
+    const drift = live?.drift || null;
     const authLabel = server.auth_type === 'key' ? 'SSH Key' : '密码';
     return `
       <div class="server-card">
@@ -278,8 +353,11 @@ function renderServers() {
             </div>
           </div>
           ${server.notes ? `<div class="hint">${escapeHtml(server.notes)}</div>` : ''}
+          ${drift ? `<div class="drift-banner"><span class="badge red">已漂移</span><span>${escapeHtml(live.drift_reason || '')}</span></div>` : ''}
         </div>
         <div class="card-actions">
+          ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(server.id)}" data-drift="${escapeHtml(drift)}"><i data-lucide="wrench"></i>一键修复</button>` : ''}
+          <button class="btn sm" data-action="status" data-id="${escapeHtml(server.id)}"><i data-lucide="activity"></i>状态</button>
           <button class="btn sm" data-action="terminal" data-id="${escapeHtml(server.id)}"><i data-lucide="terminal"></i>终端</button>
           <button class="btn sm" data-action="logs" data-id="${escapeHtml(server.id)}"><i data-lucide="scroll-text"></i>日志</button>
           <button class="btn sm ghost" data-action="edit" data-id="${escapeHtml(server.id)}"><i data-lucide="pencil"></i>编辑</button>
@@ -316,6 +394,8 @@ function renderNodes() {
   grid.innerHTML = nodes.map((node) => {
     const security = node.security === 'reality' ? 'Reality' : node.security === 'tls' ? 'TLS' : '无加密';
     const clientCount = node.clients?.length || 0;
+    const live = state.statuses[node.server_id];
+    const drift = live?.drift || null;
     const protocolRows = node.protocol === 'socks' ? '' : `
             <div class="kv">
               <span class="kv-label">传输</span>
@@ -335,6 +415,7 @@ function renderNodes() {
         <div class="node-card-head">
           <h3 title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</h3>
           <div class="card-head-badges">
+            ${statusPill(nodeLiveState(state.statuses[node.server_id], node))}
             ${node.role === 'outbound' ? badge('出站', 'amber') : badge('入站')}
             ${node.enabled === 1 ? badge('启用', 'green') : badge('停用')}
           </div>
@@ -355,8 +436,11 @@ function renderNodes() {
             </div>
             ${protocolRows}
           </div>
+          ${drift ? `<div class="drift-banner"><span class="badge red">已漂移</span><span>${escapeHtml(live.drift_reason || '')}</span></div>` : ''}
         </div>
         <div class="card-actions">
+          ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(node.id)}" data-drift="${escapeHtml(drift)}"><i data-lucide="wrench"></i>一键修复</button>` : ''}
+          <button class="btn sm" data-action="status" data-id="${escapeHtml(node.id)}"><i data-lucide="activity"></i>检查状态</button>
           <button class="btn sm" data-action="share" data-id="${escapeHtml(node.id)}"><i data-lucide="share-2"></i>分享</button>
           <button class="btn sm" data-action="edit" data-id="${escapeHtml(node.id)}"><i data-lucide="pencil"></i>编辑</button>
           <button class="btn sm danger" data-action="delete" data-id="${escapeHtml(node.id)}"><i data-lucide="trash-2"></i>删除</button>
@@ -1233,6 +1317,192 @@ function openTerminalModal(server) {
   });
 }
 
+function formatTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+async function checkServerStatus(serverId) {
+  const server = state.servers.find((item) => item.id === serverId);
+  if (!server) return;
+  const body = $('#status-modal-body');
+  if (body) body.innerHTML = '<div class="status-loading">正在检查服务器状态...</div>';
+  try {
+    const status = await api(`/api/servers/${serverId}/status`);
+    state.probes[serverId] = status;
+    renderServers();
+    openStatusModal(server, status);
+  } catch (error) {
+    if (body) {
+      body.innerHTML = `<div class="status-error"><strong>检查失败</strong><span>${escapeHtml(error.message)}</span></div>`;
+    } else {
+      toast(error.message, 'error');
+    }
+  }
+}
+
+function openStatusModal(server, status) {
+  if (!server) return;
+  const nodes = state.nodes.filter((node) => node.server_id === server.id);
+  const sshOk = Boolean(status?.ssh?.connected);
+  const xrayRunning = Boolean(status?.xray?.running);
+  const xrayInstalled = status?.xray?.installed === true;
+  const config = status?.config;
+  const sshBadge = sshOk
+    ? badge('已连接', 'green')
+    : badge('连接失败', 'red', status?.ssh?.error || '');
+  const xrayBadge = !xrayInstalled
+    ? badge('未安装', 'red')
+    : xrayRunning
+      ? badge('运行中', 'green')
+      : badge('未运行', 'amber');
+  const configBadge = !config?.exists
+    ? badge('缺失', 'red')
+    : !config?.readable
+      ? badge('不可读', 'amber', '配置文件存在但当前用户无法读取')
+      : config?.valid
+        ? badge('有效', 'green')
+        : badge('无效', 'red');
+  const ports = status?.ports || { tcp: [], udp: [] };
+  const allPorts = [...new Set([...ports.tcp, ...ports.udp])];
+  const listeningLabel = allPorts.length ? allPorts.join(', ') : '无';
+  const chip = (text, ok) => `<span class="status-chip ${ok ? 'ok' : 'bad'}">${escapeHtml(text)}</span>`;
+  const mutedChip = (text) => `<span class="status-chip muted">${escapeHtml(text)}</span>`;
+
+  const nodeRows = nodes.length
+    ? nodes.map((node) => {
+        const nodeStatus = status?.nodes?.find((item) => item.id === node.id);
+        let stateBadge;
+        if (!sshOk || !status) stateBadge = badge('未检查', '');
+        else if (!xrayRunning) stateBadge = badge('服务未运行', 'amber');
+        else if (!nodeStatus?.in_config) stateBadge = badge('配置缺失', 'red');
+        else if (!nodeStatus?.listening) stateBadge = badge('端口未监听', 'red');
+        else stateBadge = badge('监听正常', 'green');
+        const wantsUdp = node.protocol === 'socks' || String(node.ss_network || '').includes('udp');
+        const udpChip = wantsUdp
+          ? chip(`UDP ${nodeStatus?.listening_udp ? '监听' : '未监听'}`, Boolean(nodeStatus?.listening_udp))
+          : '';
+        return `
+          <div class="status-node-row">
+            <div class="status-node-main">
+              <strong>${escapeHtml(node.name)}</strong>
+              <span class="muted">${escapeHtml(protocolLabel(node.protocol))} · 端口 ${escapeHtml(node.port)} · ${node.role === 'outbound' ? '出站' : '入站'}</span>
+            </div>
+            <div class="status-node-chips">
+              ${nodeStatus ? chip(`配置 ${nodeStatus.in_config ? '已写入' : '缺失'}`, nodeStatus.in_config) : mutedChip('配置 —')}
+              ${nodeStatus ? chip(`TCP ${nodeStatus.listening_tcp ? '监听' : '未监听'}`, nodeStatus.listening_tcp) : mutedChip('TCP —')}
+              ${udpChip}
+            </div>
+            ${stateBadge}
+          </div>
+        `;
+      }).join('')
+    : emptyState('该服务器还没有节点');
+
+  setModal(`
+    <div class="modal-backdrop">
+      <div class="modal wide status-modal">
+        <div class="modal-head">
+          <h2>${escapeHtml(server.name)} 状态</h2>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <div class="modal-body" id="status-modal-body">
+          ${!status ? `<div class="status-loading">正在检查...</div>` : ''}
+          ${status && !sshOk ? `<div class="status-error"><strong>SSH 检查失败</strong><span>${escapeHtml(status.ssh?.error || '未知错误')}</span></div>` : ''}
+          ${status ? `
+          <div class="status-summary">
+            <div class="status-summary-item">
+              <span class="status-summary-label">SSH 连接</span>
+              <span class="status-summary-value">${sshBadge}</span>
+            </div>
+            <div class="status-summary-item">
+              <span class="status-summary-label">Xray 服务</span>
+              <span class="status-summary-value">${xrayBadge}</span>
+            </div>
+            <div class="status-summary-item">
+              <span class="status-summary-label">配置文件</span>
+              <span class="status-summary-value">${configBadge}</span>
+            </div>
+            <div class="status-summary-item">
+              <span class="status-summary-label">监听端口</span>
+              <span class="status-summary-value status-port-value">${escapeHtml(listeningLabel)}</span>
+            </div>
+          </div>
+          <div class="status-section-head">
+            <span>节点实际状态</span>
+            <span>最近检查 ${escapeHtml(formatTime(status.checked_at))}</span>
+          </div>
+          <div class="status-node-list">${nodeRows}</div>
+          ` : ''}
+        </div>
+        <div class="modal-foot">
+          <button class="btn ghost" data-close>关闭</button>
+          <button class="btn primary" id="recheck-status-btn"><i data-lucide="refresh-cw"></i>重新检查</button>
+        </div>
+      </div>
+    </div>
+  `);
+  $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
+  $('#recheck-status-btn').addEventListener('click', () => checkServerStatus(server.id));
+}
+
+function openRepairConfirmModal(server, driftType, driftReason) {
+  if (!server || !driftType) return;
+  const summary = REPAIR_SUMMARIES[driftType] || '执行远程修复操作';
+  setModal(`
+    <div class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>确认修复</h2>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="repair-summary">
+            <div class="repair-row"><span class="repair-label">服务器</span><strong>${escapeHtml(server.name)}</strong><span class="muted">${escapeHtml(server.host)}:${escapeHtml(server.port)}</span></div>
+            <div class="repair-row"><span class="repair-label">漂移类型</span>${statusPill(driftType)}<span>${escapeHtml(driftReason || '')}</span></div>
+            <div class="repair-row"><span class="repair-label">执行操作</span><span>${escapeHtml(summary)}</span></div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn ghost" data-close>取消</button>
+          <button class="btn danger" id="confirm-repair-btn"><i data-lucide="wrench"></i>确认修复</button>
+        </div>
+      </div>
+    </div>
+  `);
+  $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
+  $('#confirm-repair-btn').addEventListener('click', () => runRepair(server, driftType));
+}
+
+async function runRepair(server, driftType) {
+  if (!server || !driftType) return;
+  openProgressModal('正在修复', `正在对「${server.name}」执行修复...`);
+  try {
+    const result = await api(`/api/servers/${server.id}/repair`, {
+      method: 'POST',
+      body: JSON.stringify({ drift_type: driftType })
+    });
+    closeProgressModal();
+    if (result.ok) {
+      openResultModal('修复完成', [
+        `服务器：${server.name}`,
+        `漂移类型：${statusMeta(driftType).label}`,
+        `执行操作：${REPAIR_SUMMARIES[driftType] || result.action}`,
+        '修复成功，下一轮巡检会自动确认状态'
+      ]);
+    } else {
+      openResultModal('修复失败', `${result.error || '未知错误'}\n\n动作：${result.action}`, true);
+    }
+    await loadAll();
+  } catch (error) {
+    closeProgressModal();
+    toast(error.message, 'error');
+    await loadAll();
+  }
+}
+
 async function runServerAction(action, serverId, button) {
   if (action === 'terminal') {
     const server = state.servers.find((item) => item.id === serverId);
@@ -1243,6 +1513,14 @@ async function runServerAction(action, serverId, button) {
   button.disabled = true;
   button.textContent = '执行中...';
   try {
+    if (action === 'status') {
+      await checkServerStatus(serverId);
+    }
+    if (action === 'repair') {
+      const server = state.servers.find((item) => item.id === serverId);
+      const live = state.statuses[serverId];
+      openRepairConfirmModal(server, live?.drift, live?.drift_reason);
+    }
     if (action === 'logs') {
       const logs = await api(`/api/servers/${serverId}/logs?lines=200`);
       openResultModal('远程日志', logs.stdout || '没有日志', true);
@@ -1269,6 +1547,16 @@ async function runServerAction(action, serverId, button) {
 async function runNodeAction(action, nodeId, button) {
   const node = state.nodes.find((item) => item.id === nodeId);
   if (!node) return;
+  if (action === 'status') {
+    await checkServerStatus(node.server_id);
+    return;
+  }
+  if (action === 'repair') {
+    const server = state.servers.find((item) => item.id === node.server_id);
+    const live = state.statuses[node.server_id];
+    openRepairConfirmModal(server, live?.drift, live?.drift_reason);
+    return;
+  }
   if (action === 'share') openShareModal(node);
   if (action === 'edit') openNodeModal(node.server_id, node);
   if (action === 'delete') {
@@ -1299,6 +1587,17 @@ function wireEvents() {
 
   $('#refresh-btn').addEventListener('click', loadAll);
   $('#add-server-btn').addEventListener('click', () => openServerModal());
+  const autoRepairSwitch = $('#auto-repair-switch');
+  if (autoRepairSwitch) {
+    autoRepairSwitch.checked = isAutoRepairEnabled();
+    autoRepairSwitch.addEventListener('change', () => {
+      setAutoRepairEnabled(autoRepairSwitch.checked);
+      if (autoRepairSwitch.checked) {
+        state.autoRepairNotified = new Set();
+        loadStatus();
+      }
+    });
+  }
   $('#add-node-btn').addEventListener('click', () => openNodeModal(state.selectedServerId));
   $('#overview-go-nodes').addEventListener('click', () => {
     $$('.nav-item[data-view="nodes"]')[0].click();
@@ -1388,3 +1687,4 @@ function wireEvents() {
 
 wireEvents();
 loadAll();
+setInterval(loadStatus, 20000);

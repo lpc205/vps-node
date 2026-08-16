@@ -87,10 +87,17 @@
       <section id="view-servers" class="view">
         <div class="page-toolbar">
           <div class="toolbar-copy">管理 SSH 连接与远程部署目标</div>
-          <button id="add-server-btn" class="btn primary">
-            <i data-lucide="plus"></i>
-            添加服务器
-          </button>
+          <div class="toolbar-actions">
+            <label class="auto-repair-toggle" title="开启后自动提示服务停止类漂移，执行前仍需确认">
+              <span>自动修复</span>
+              <input type="checkbox" id="auto-repair-switch">
+              <span class="switch"></span>
+            </label>
+            <button id="add-server-btn" class="btn primary">
+              <i data-lucide="plus"></i>
+              添加服务器
+            </button>
+          </div>
         </div>
         <div id="server-grid" class="server-grid"></div>
       </section>

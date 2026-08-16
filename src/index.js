@@ -3,10 +3,22 @@ import { Client } from 'ssh2';
 import { app } from './app.js';
 import { getServerRecord } from './db.js';
 import { sshConnectOptions } from './ssh.js';
+import { startStatusSweeper, stopStatusSweeper } from './status.js';
 
 const port = Number(process.env.PORT || 3000);
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`vps-node-console listening on http://0.0.0.0:${port}`);
+});
+
+startStatusSweeper();
+
+process.on('SIGINT', () => {
+  stopStatusSweeper();
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  stopStatusSweeper();
+  process.exit(0);
 });
 
 const wss = new WebSocketServer({ server, path: '/ws/terminal' });

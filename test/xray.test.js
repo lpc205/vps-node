@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildXrayConfig, generateRealityKeypair, nodeLinks } from '../src/xray.js';
+import { buildNodeStatuses, classifySshError, parseStatusOutput } from '../src/remote.js';
 
 test('buildXrayConfig emits supported inbound protocols', () => {
   const nodes = [
@@ -337,4 +338,49 @@ test('buildXrayConfig routes vless inbound to socks outbound', () => {
   assert.equal(routed.settings.servers[0].address, '43.212.14.10');
   assert.equal(routed.settings.servers[0].port, 8443);
   assert.deepEqual(routed.settings.servers[0].users, [{ user: 'lllppp', pass: 'lpc187027' }]);
+});
+
+test('xray status output parses service and port fields', () => {
+  const output = [
+    'XRAY_BIN=/usr/local/bin/xray',
+    'XRAY_VERSION=Xray 1.8.0',
+    'XRAY_ACTIVE=active',
+    'XRAY_ENABLED=enabled',
+    'CONFIG_EXISTS=yes',
+    'CONFIG_READABLE=no',
+    'TCP_PORTS=22,443,8388',
+    'UDP_PORTS=443',
+    'STATUS_DONE=yes'
+  ].join('\n');
+  const fields = parseStatusOutput(output);
+  assert.equal(fields.XRAY_BIN, '/usr/local/bin/xray');
+  assert.equal(fields.XRAY_ACTIVE, 'active');
+  assert.equal(fields.TCP_PORTS, '22,443,8388');
+});
+
+test('buildNodeStatuses matches config inbounds to listening ports', () => {
+  const nodes = [
+    { id: 'n1', name: 'vless', protocol: 'vless', port: 443, role: 'inbound', enabled: 1 },
+    { id: 'n2', name: 'ss', protocol: 'shadowsocks', port: 8388, role: 'inbound', enabled: 1 },
+    { id: 'n3', name: 'missing', protocol: 'trojan', port: 8443, role: 'inbound', enabled: 1 }
+  ];
+  const config = {
+    inbounds: [
+      { port: 443, protocol: 'vless', tag: 'vless-443' },
+      { port: 8388, protocol: 'shadowsocks', tag: 'shadowsocks-8388' }
+    ]
+  };
+  const statuses = buildNodeStatuses(nodes, config, [22, 443], [8388]);
+  assert.equal(statuses[0].in_config, true);
+  assert.equal(statuses[0].listening, true);
+  assert.equal(statuses[1].listening_udp, true);
+  assert.equal(statuses[1].listening_tcp, false);
+  assert.equal(statuses[2].in_config, false);
+  assert.equal(statuses[2].listening, false);
+});
+
+test('classifySshError distinguishes auth and timeout failures', () => {
+  assert.match(classifySshError(new Error('All configured authentication methods failed')), /认证失败/);
+  assert.match(classifySshError(new Error('SSH command timed out after 20000ms')), /超时/);
+  assert.match(classifySshError(new Error('connect ECONNREFUSED 1.2.3.4:22')), /拒绝/);
 });

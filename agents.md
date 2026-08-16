@@ -28,17 +28,20 @@
 9. 路由生效逻辑：连接后，在入站节点所在服务器上修改 Xray 配置，使该入站使用所选出站节点作为出口。
 10. 进度/结果弹窗：节点部署和路由连接等操作增加“正在执行”弹窗，完成后弹窗展示结果。
 11. SSH 终端：服务器卡片去掉 `测试 / 状态 / 部署`，新增“终端”按钮，点击后直接打开 xterm.js SSH 交互窗口；通过 WebSocket 连接真实 shell，支持输入和 resize。
+12. 只读状态检查：服务器卡片恢复“状态”按钮，节点卡片新增“检查状态”入口，展示 SSH 连通、Xray 安装/运行、配置存在与有效、端口监听、节点配置匹配等实际状态；所有检查只读，不修改 VPS 文件或服务。
+13. 自动状态巡检：后台按 60 秒间隔（`PANEL_STATUS_INTERVAL` 可调）错峰巡检每台服务器，写入 `server_status` 缓存；前端每 20 秒轮询 `GET /api/status`，在总览/服务器/节点页持续展示在线运行、离线、配置不一致、未安装等状态点。
+14. 漂移修复：状态区分服务停止/配置缺失/配置不一致/二进制缺失；服务器与节点卡片显示“已漂移”标签和原因，提供“一键修复”确认后执行，全部写入 `repair_logs` 审计；自动修复开关默认关闭，开启后仅自动提示服务停止类漂移。
 
 ## 当前页面与入口
 
 | 页面 | 用途 | 主要操作 |
 | --- | --- | --- |
-| 总览 | 服务器/节点/启用节点统计，最近节点列表 | 点击最近节点查看分享链接 |
-| 服务器 | 管理 SSH 目标 | 添加、粘贴识别保存、编辑、删除、日志、终端 |
-| 节点 | 管理指定服务器上的节点 | 添加/编辑/删除节点、分享链接、部署全部节点 |
+| 总览 | 服务器/节点/启用节点统计，最近节点列表 | 查看状态点、点击最近节点查看分享链接 |
+| 服务器 | 管理 SSH 目标 | 添加、粘贴识别保存、状态、一键修复、编辑、删除、日志、终端 |
+| 节点 | 管理指定服务器上的节点 | 添加/编辑/删除节点、检查状态、一键修复、分享链接、部署全部节点 |
 | 路由 | 管理入站到出站的转发链路 | 选择入站/出站节点、连接所选节点、断开链路 |
 
-服务器卡片当前按钮为：`终端 / 日志 / 编辑 / 删除`。旧的 `测试 / 状态 / 部署` 卡片按钮已移除；对应 API 仍保留，节点页仍保留“部署全部节点”。
+服务器卡片当前按钮为：`一键修复（漂移时）/ 状态 / 终端 / 日志 / 编辑 / 删除`。漂移时卡片显示“已漂移”标签和原因；节点卡片同样展示漂移标签与一键修复。服务器页工具栏有默认关闭的“自动修复”开关。
 
 ## 架构
 
@@ -78,8 +81,11 @@ src/
   ssh.js            ssh2 连接、脚本执行、sudo 封装
   remote.js         VPS 探测、Xray 安装、配置写入、重启、状态、日志
   xray.js           Xray config 生成、分享链接、Reality 密钥对
+  status.js         自动状态巡检调度、状态派生、配置 sha256 一致性
+  repair.js         漂移修复执行、动作映射、审计日志写入
 test/
   xray.test.js      配置生成与链接测试
+  status.test.js    状态派生与缓存记录测试
 data/               运行数据（不提交）：panel.db、.secret
 Dockerfile
 docker-compose.yml
@@ -116,6 +122,21 @@ docker-compose.yml
 - `outbound_node_id`
 - `enabled / created_at / updated_at`
 
+### server_status
+
+- `server_id`：主键，对应 servers.id
+- `ssh_reachable / xray_installed / xray_bin_present / service_active / config_present / config_match / ports_listening`：`1/0`
+- `last_checked_at / last_error / node_status_json / failure_count / next_check_at / updated_at`
+- `node_status_json`：每次巡检的快照，含每个节点的 `in_config / listening_tcp / listening_udp / listening`
+- `failure_count` 用于指数退避；`next_check_at` 记录下次可巡检时间
+
+### repair_logs
+
+- `id / server_id / server_name`
+- `drift_type`：`service_stopped / config_missing / config_mismatch / binary_missing`
+- `action`：`restart / write_config_restart / redeploy`
+- `result / success / created_at`：执行结果、成败标记、审计时间
+
 ### 本地文件
 
 - `data/panel.db`：SQLite
@@ -148,6 +169,31 @@ docker-compose.yml
 4. 出站节点如果不在同一服务器且未运行，会先部署出站服务器。
 5. 断开链路会删除 route 并重新部署入站服务器。
 
+### 只读状态检查
+
+1. 服务器卡片点击“状态”或节点卡片点击“检查状态”。
+2. 后端执行只读脚本：SSH 连通、Xray 二进制与版本、systemd/OpenRC 服务状态、配置文件存在性及内容（base64 读取后本地解析）、TCP/UDP 监听端口。
+3. 状态弹窗展示 SSH、Xray 服务、配置文件、监听端口四个摘要项，并列出该服务器下每个节点的“配置已写入 / TCP / UDP / 监听”明细。
+4. SSH 失败时返回分类错误（认证失败、连接超时、连接被拒绝、无法解析地址、不可达、连接中断、缺少 sudo 密码），前端明确展示。
+5. 非 root 用户读取 600 权限配置失败时，会自动尝试用 sudo 只读读取。
+
+### 自动状态巡检
+
+1. `src/index.js` 启动时调用 `startStatusSweeper()`，默认每 60 秒巡检一轮（`PANEL_STATUS_INTERVAL` 秒）。
+2. 每台服务器错峰入队，并发上限默认 3（`PANEL_STATUS_CONCURRENCY`），单次 SSH 超时 15 秒。
+3. 巡检失败按指数退避：失败次数 n 时下次间隔为 `interval * 2^(n-1)`，上限 30 分钟；成功后恢复固定间隔。
+4. 配置一致性：本地用 `buildXrayConfig` 生成期望配置并计算 sha256，与 VPS 实际 `config.json` sha256 比对，结果写入 `config_match`。
+5. `GET /api/status` 聚合返回每台服务器的派生状态与节点快照；前端每 20 秒轮询并刷新状态点。
+6. 派生状态：`running / service_stopped / offline / config_mismatch / config_missing / binary_missing / ports_down / unknown`。
+
+### 漂移修复
+
+1. 漂移类型与动作映射：`service_stopped -> restart`、`config_missing/config_mismatch -> write_config_restart`、`binary_missing -> redeploy`。
+2. `POST /api/servers/:id/repair` 先校验缓存：无缓存、离线、无漂移或漂移已变化时拒绝执行。
+3. 修复复用 `restartXray / writeXrayConfig / deployServer`，不新增远程脚本；不修改 Xray 以外的内容。
+4. 每次修复写入 `repair_logs`（时间、服务器、漂移类型、动作、结果、成败）。
+5. 前端“一键修复”先弹确认框展示操作摘要；自动修复开关默认关闭，开启后仅对可达且 `service_stopped` 的服务器自动弹出确认框，不自动执行，离线不排队。
+
 ### SSH 终端
 
 1. 服务器卡片点击“终端”。
@@ -158,12 +204,15 @@ docker-compose.yml
 ## API 摘要
 
 - `GET /api/health`、`GET /api/stats`
+- `GET /api/status`：聚合状态接口，返回 `interval_seconds` 与每台服务器的 `server / state / status / nodes`
+- `POST /api/servers/:id/repair`：按缓存漂移类型执行修复，返回动作与审计记录
+- `GET /api/repair-logs?limit=N`：最近修复审计日志
 - `GET /api/servers`
 - `POST /api/servers`
 - `PUT /api/servers/:id`
 - `DELETE /api/servers/:id`
 - `POST /api/servers/:id/test`：SSH 连通与系统信息（UI 已不展示按钮，API 保留）
-- `GET /api/servers/:id/status`
+- `GET /api/servers/:id/status`：只读状态检查，返回 `ssh / xray / config / ports / nodes / checked_at`；SSH 失败时 `ok=false` 并带分类错误
 - `POST /api/servers/:id/install`
 - `POST /api/servers/:id/restart`
 - `POST /api/servers/:id/x25519`：本地生成 Reality 密钥对
@@ -185,7 +234,7 @@ docker-compose.yml
 npm install
 npm run dev       # 打开 http://127.0.0.1:3000
 npm start
-npm test          # 当前 7 个 node:test 用例
+npm test          # 当前 15 个 node:test 用例
 ```
 
 Docker：
@@ -196,6 +245,11 @@ docker compose up -d --build
 
 要求 Node.js >= 22.5。
 
+环境变量：
+
+- `PANEL_STATUS_INTERVAL`：巡检间隔秒数，默认 `60`，最小 `5`
+- `PANEL_STATUS_CONCURRENCY`：同时巡检的 SSH 并发数，默认 `3`，范围 `1-10`
+
 ## 重要实现细节与坑
 
 - `@xterm/addon-fit` 的浏览器 UMD 全局是 `window.FitAddon`（一个命名空间对象），不是构造函数。当前代码使用 `typeof FitAddon === 'function' ? FitAddon : FitAddon.FitAddon` 来兼容。
@@ -204,12 +258,26 @@ docker compose up -d --build
 - 服务器凭据只在服务端 SSH 连接时解密，API 永远不返回明文/密文凭据。
 - 非 root 服务器通过 `sudo -S` 执行部署脚本，需要 sudo 密码。
 - Xray 安装脚本支持 systemd、OpenRC，以及无服务管理器的 `nohup/setsid` 兜底。
+- 自动巡检写入 `server_status` 缓存；`GET /api/status` 只读缓存，不触发新的 SSH 检查。
+- 配置一致性用 sha256 比对：本地 `JSON.stringify(buildXrayConfig(...), null, 2)` 与 VPS 原始文件字节一致才算匹配。
+- 巡检失败会把 `failure_count` 递增并指数退避，成功时清零；`next_check_at` 控制错峰与重试节奏。
+- 漂移状态与修复动作一一映射，服务停止只 `restartXray`，配置类漂移才重写配置，二进制缺失走 `deployServer` 整机重部署。
+- 修复必须先确认：前端确认弹窗展示服务器、漂移类型和远程操作摘要；后端拒绝离线/无漂移请求。
+- “自动修复”开关默认关闭（localStorage 持久化），开启后仅自动弹出服务停止类确认框，绝不绕过确认执行。
+- 所有修复写入 `repair_logs`，可在 `GET /api/repair-logs` 查看。
 - 部署使用 base64 传输 `config.json`，避免 SSH 脚本转义问题。
 - 路由配置在 `buildXrayConfig` 中按 `routes` 生成 `outbound` 与 routing rule；同一入站只能有一条 route。
 - 节点表单按协议动态显隐字段：Shadowsocks 不显示传输/安全/SNI/路径，改用 `method` 与 `ss_network`；VMess 客户端有 `security`；VLESS 只在 Reality 时显示 flow。
 - Reality 仅对 VLESS / Trojan 且传输不为 WS 可用；VMess 与 WS 组合会被表单禁用并在后端拒绝。
 
 ## 安全与边界
+## GitHub 同步
+
+- 远程仓库：`https://github.com/lpc205/vps-node.git`，默认分支 `main`。
+- `core.hooksPath=.githooks`，`post-commit` hook 会把当前分支提交自动推送到已配置 upstream。
+- `.github/workflows/ci.yml` 在 push 到 `main/master` 时运行 `npm test`。
+- 新功能完成后在 `main` 上执行 `git add -A && git commit` 即可自动同步；若 hook 未触发则手动 `git push origin main`。
+- `data/`、`node_modules/`、`.env` 已在 `.gitignore` 中，禁止提交面板凭据和本地数据。
 
 - 面板目前没有登录鉴权，默认只在本机或 Docker `127.0.0.1` 暴露。
 - `data/.secret`、私钥、密码、UUID 等不要提交或外传。

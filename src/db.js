@@ -64,6 +64,37 @@ CREATE TABLE IF NOT EXISTS routes (
 
 CREATE INDEX IF NOT EXISTS idx_routes_inbound ON routes(inbound_node_id);
 CREATE INDEX IF NOT EXISTS idx_routes_outbound ON routes(outbound_node_id);
+
+CREATE TABLE IF NOT EXISTS server_status (
+  server_id TEXT PRIMARY KEY,
+  ssh_reachable INTEGER NOT NULL DEFAULT 0,
+  xray_bin_present INTEGER NOT NULL DEFAULT 0,
+  xray_installed INTEGER NOT NULL DEFAULT 0,
+  service_active INTEGER NOT NULL DEFAULT 0,
+  config_present INTEGER NOT NULL DEFAULT 0,
+  config_match INTEGER NOT NULL DEFAULT 0,
+  ports_listening INTEGER NOT NULL DEFAULT 0,
+  last_checked_at TEXT,
+  last_error TEXT NOT NULL DEFAULT '',
+  node_status_json TEXT NOT NULL DEFAULT '[]',
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  next_check_at TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS repair_logs (
+  id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL,
+  server_name TEXT NOT NULL DEFAULT '',
+  drift_type TEXT NOT NULL,
+  action TEXT NOT NULL,
+  result TEXT NOT NULL DEFAULT '',
+  success INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_repair_logs_server ON repair_logs(server_id);
+CREATE INDEX IF NOT EXISTS idx_repair_logs_created ON repair_logs(created_at);
 `);
 
 const nodeColumns = db.prepare('PRAGMA table_info(nodes)').all();
@@ -76,6 +107,13 @@ if (!nodeColumns.some((column) => column.name === 'method')) {
 if (!nodeColumns.some((column) => column.name === 'ss_network')) {
   db.exec("ALTER TABLE nodes ADD COLUMN ss_network TEXT NOT NULL DEFAULT 'tcp'");
 }
+
+const statusColumns = db.prepare('PRAGMA table_info(server_status)').all();
+if (!statusColumns.some((column) => column.name === 'xray_bin_present')) {
+  db.exec('ALTER TABLE server_status ADD COLUMN xray_bin_present INTEGER NOT NULL DEFAULT 0');
+  db.exec('UPDATE server_status SET xray_bin_present = xray_installed');
+}
+db.exec('UPDATE server_status SET xray_bin_present = xray_installed WHERE xray_bin_present = 0 AND xray_installed = 1');
 
 const now = () => new Date().toISOString();
 
@@ -187,6 +225,8 @@ export function deleteServer(id) {
          OR outbound_node_id IN (SELECT id FROM nodes WHERE server_id = ?)
     `).run(id, id);
     db.prepare('DELETE FROM nodes WHERE server_id = ?').run(id);
+    db.prepare('DELETE FROM server_status WHERE server_id = ?').run(id);
+    db.prepare('DELETE FROM repair_logs WHERE server_id = ?').run(id);
     const result = db.prepare('DELETE FROM servers WHERE id = ?').run(id);
     db.exec('COMMIT');
     return result.changes > 0;
@@ -351,6 +391,79 @@ export function getStats() {
   const nodeCount = db.prepare('SELECT COUNT(*) AS count FROM nodes').get().count;
   const enabledCount = db.prepare('SELECT COUNT(*) AS count FROM nodes WHERE enabled = 1').get().count;
   return { servers: serverCount, nodes: nodeCount, enabledNodes: enabledCount };
+}
+
+export function listServerStatuses() {
+  return db.prepare('SELECT * FROM server_status').all().map((row) => ({
+    ...row,
+    node_status: JSON.parse(row.node_status_json || '[]')
+  }));
+}
+
+export function getServerStatus(serverId) {
+  const row = db.prepare('SELECT * FROM server_status WHERE server_id = ?').get(serverId) || null;
+  if (!row) return null;
+  return { ...row, node_status: JSON.parse(row.node_status_json || '[]') };
+}
+
+export function upsertServerStatus(serverId, status) {
+  const timestamp = now();
+  const data = {
+    ssh_reachable: status.ssh_reachable ? 1 : 0,
+    xray_installed: status.xray_installed ? 1 : 0,
+    xray_bin_present: status.xray_bin_present ? 1 : 0,
+    service_active: status.service_active ? 1 : 0,
+    config_present: status.config_present ? 1 : 0,
+    config_match: status.config_match ? 1 : 0,
+    ports_listening: status.ports_listening ? 1 : 0,
+    last_checked_at: status.last_checked_at || timestamp,
+    last_error: String(status.last_error || ''),
+    node_status_json: JSON.stringify(status.node_status || []),
+    failure_count: Number(status.failure_count) || 0,
+    next_check_at: status.next_check_at || '',
+    updated_at: timestamp
+  };
+  db.prepare(`
+    INSERT INTO server_status (
+      server_id, ssh_reachable, xray_installed, xray_bin_present, service_active, config_present,
+      config_match, ports_listening, last_checked_at, last_error, node_status_json,
+      failure_count, next_check_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(server_id) DO UPDATE SET
+      ssh_reachable = excluded.ssh_reachable,
+      xray_installed = excluded.xray_installed,
+      xray_bin_present = excluded.xray_bin_present,
+      service_active = excluded.service_active,
+      config_present = excluded.config_present,
+      config_match = excluded.config_match,
+      ports_listening = excluded.ports_listening,
+      last_checked_at = excluded.last_checked_at,
+      last_error = excluded.last_error,
+      node_status_json = excluded.node_status_json,
+      failure_count = excluded.failure_count,
+      next_check_at = excluded.next_check_at,
+      updated_at = excluded.updated_at
+  `).run(serverId, data.ssh_reachable, data.xray_installed, data.xray_bin_present, data.service_active, data.config_present,
+    data.config_match, data.ports_listening, data.last_checked_at, data.last_error, data.node_status_json,
+    data.failure_count, data.next_check_at, data.updated_at);
+  return getServerStatus(serverId);
+}
+
+export function addRepairLog(entry) {
+  const id = newId();
+  const timestamp = now();
+  db.prepare(`
+    INSERT INTO repair_logs
+      (id, server_id, server_name, drift_type, action, result, success, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, entry.server_id, String(entry.server_name || ''), String(entry.drift_type || ''),
+    String(entry.action || ''), String(entry.result || ''), entry.success ? 1 : 0, timestamp);
+  return db.prepare('SELECT * FROM repair_logs WHERE id = ?').get(id);
+}
+
+export function listRepairLogs(limit = 100) {
+  const count = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 500)) : 100;
+  return db.prepare('SELECT * FROM repair_logs ORDER BY created_at DESC LIMIT ?').all(count);
 }
 
 export function listRoutes() {

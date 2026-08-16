@@ -1,5 +1,7 @@
 import { runChecked, runScript, runSudo } from './ssh.js';
 import { buildXrayConfig } from './xray.js';
+import { createHash } from 'node:crypto';
+
 
 const PROBE_SCRIPT = `
 set -e
@@ -162,7 +164,7 @@ export async function probeServer(server) {
   const result = await runChecked(runScript(server, PROBE_SCRIPT));
   const fields = {};
   for (const line of result.stdout.split(/\r?\n/)) {
-    const match = line.match(/^([A-Z_]+)=(.*)$/);
+    const match = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
     if (match) fields[match[1]] = match[2];
   }
   const [memoryTotal, memoryUsed, memoryFree] = String(fields.MEMORY || '').split(':');
@@ -239,10 +241,10 @@ echo "XRAY_RESTARTED=ok"
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
 
-export async function xrayStatus(server) {
-  const script = `
-if command -v xray >/dev/null 2>&1; then
-  XRAY_BIN="$(command -v xray)"
+const STATUS_SCRIPT = `
+set +e
+if command -v xray >/dev/null 2>&1 || [ -x /usr/local/bin/xray ]; then
+  XRAY_BIN="$(command -v xray 2>/dev/null || echo /usr/local/bin/xray)"
   echo "XRAY_BIN=$XRAY_BIN"
   if "$XRAY_BIN" version >/dev/null 2>&1; then
     echo "XRAY_VERSION=$("$XRAY_BIN" version 2>/dev/null | head -1)"
@@ -252,9 +254,14 @@ if command -v xray >/dev/null 2>&1; then
 else
   echo "XRAY_BIN=not-installed"
 fi
+if [ -x /usr/local/bin/xray ]; then
+  echo "XRAY_BIN_PRESENT=yes"
+else
+  echo "XRAY_BIN_PRESENT=no"
+fi
 if command -v systemctl >/dev/null 2>&1; then
   echo "XRAY_ACTIVE=$(systemctl is-active xray 2>/dev/null || echo inactive)"
-  echo "XRAY_ENABLED=$(systemctl is-enabled xray 2>/dev/null || echo unknown)"
+  echo "XRAY_ENABLED=$(systemctl is-enabled xray 2>/dev/null || echo disabled)"
 elif command -v rc-service >/dev/null 2>&1; then
   if rc-service xray status >/dev/null 2>&1; then
     echo "XRAY_ACTIVE=started"
@@ -269,26 +276,228 @@ elif command -v rc-service >/dev/null 2>&1; then
 else
   echo "XRAY_ACTIVE=unknown"
 fi
+CONFIG_PATH=""
+if command -v systemctl >/dev/null 2>&1; then
+  CONFIG_PATH="$(systemctl show -p ExecStart --value xray 2>/dev/null | sed -n 's/.*-config[ =]*\\([^ ]*\\).*/\\1/p')"
+fi
+if [ -z "$CONFIG_PATH" ] && command -v ps >/dev/null 2>&1; then
+  CONFIG_PATH="$(ps -ef 2>/dev/null | grep '[x]ray run' | head -1 | sed -n 's/.*-config[ =]*\\([^ ]*\\).*/\\1/p')"
+fi
+if [ -z "$CONFIG_PATH" ]; then
+  for CANDIDATE in /usr/local/etc/xray/config.json /etc/xray/config.json /usr/local/etc/v2ray/config.json; do
+    if [ -f "$CANDIDATE" ]; then CONFIG_PATH="$CANDIDATE"; break; fi
+  done
+fi
+if [ -z "$CONFIG_PATH" ]; then CONFIG_PATH="/usr/local/etc/xray/config.json"; fi
+echo "CONFIG_PATH=$CONFIG_PATH"
+if [ -f "$CONFIG_PATH" ]; then
+  echo "CONFIG_EXISTS=yes"
+  CONFIG_B64="$(base64 -w0 "$CONFIG_PATH" 2>/dev/null | tr -d '\\n')"
+  if [ -z "$CONFIG_B64" ]; then
+    CONFIG_B64="$(busybox base64 -w0 "$CONFIG_PATH" 2>/dev/null | tr -d '\\n')"
+  fi
+  if [ -z "$CONFIG_B64" ]; then
+    CONFIG_B64="$(openssl base64 -A -in "$CONFIG_PATH" 2>/dev/null | tr -d '\\n')"
+  fi
+  if [ -n "$CONFIG_B64" ]; then
+    echo "CONFIG_B64=$CONFIG_B64"
+  else
+    echo "CONFIG_READABLE=no"
+  fi
+else
+  echo "CONFIG_EXISTS=no"
+fi
 if command -v ss >/dev/null 2>&1; then
-  ss -lntp 2>/dev/null | grep -E 'xray|:11443' || true
+  echo "TCP_PORTS=$(ss -lnt 2>/dev/null | awk 'NR>1 {n=split($4,a,":"); print a[length(a)]}' | sort -n -u | tr '\\n' ',')"
+  echo "UDP_PORTS=$(ss -lnu 2>/dev/null | awk 'NR>1 {n=split($4,a,":"); print a[length(a)]}' | sort -n -u | tr '\\n' ',')"
+elif command -v netstat >/dev/null 2>&1; then
+  echo "TCP_PORTS=$(netstat -lnt 2>/dev/null | awk 'NR>2 {n=split($4,a,":"); print a[length(a)]}' | sort -n -u | tr '\\n' ',')"
+  echo "UDP_PORTS=$(netstat -lnu 2>/dev/null | awk 'NR>2 {n=split($4,a,":"); print a[length(a)]}' | sort -n -u | tr '\\n' ',')"
+fi
+echo "STATUS_DONE=yes"
+`;
+
+const READ_CONFIG_AS_ROOT_SCRIPT = (configPath) => `
+set +e
+CONFIG_PATH='${configPath}'
+if [ -f "$CONFIG_PATH" ] && [ -r "$CONFIG_PATH" ]; then
+  CONFIG_B64="$(base64 -w0 "$CONFIG_PATH" 2>/dev/null | tr -d '\\n')"
+  if [ -z "$CONFIG_B64" ]; then
+    CONFIG_B64="$(busybox base64 -w0 "$CONFIG_PATH" 2>/dev/null | tr -d '\\n')"
+  fi
+  if [ -z "$CONFIG_B64" ]; then
+    CONFIG_B64="$(openssl base64 -A -in "$CONFIG_PATH" 2>/dev/null | tr -d '\\n')"
+  fi
+  if [ -n "$CONFIG_B64" ]; then
+    echo "CONFIG_B64=$CONFIG_B64"
+    echo "CONFIG_READABLE=yes"
+  else
+    echo "CONFIG_READABLE=no"
+  fi
+else
+  echo "CONFIG_READABLE=no"
 fi
 `;
-  const result = await runScript(server, script);
+
+export function parseStatusOutput(stdout) {
   const fields = {};
-  for (const line of result.stdout.split(/\r?\n/)) {
-    const match = line.match(/^([A-Z_]+)=(.*)$/);
+  for (const line of String(stdout || '').split(/\r?\n/)) {
+    const match = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
     if (match) fields[match[1]] = match[2];
   }
+  return fields;
+}
+
+function parsePortList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map(Number)
+    .filter((port) => Number.isInteger(port) && port > 0 && port <= 65535);
+}
+
+export function classifySshError(error) {
+  const message = String(error?.message || error || '');
+  if (/All configured authentication methods failed|Permission denied|Authentication failed|Unable to authenticate|Cannot parse privateKey/i.test(message)) {
+    return 'SSH 认证失败：请检查用户名、密码或私钥';
+  }
+  if (/timed out|timeout|ETIMEDOUT/i.test(message)) {
+    return 'SSH 连接超时：请检查服务器地址或防火墙';
+  }
+  if (/ECONNREFUSED|Connection refused/i.test(message)) {
+    return 'SSH 连接被拒绝：请确认端口和 SSH 服务';
+  }
+  if (/ENOTFOUND|getaddrinfo|Name or service not known/i.test(message)) {
+    return '无法解析服务器地址：请检查主机名或 IP';
+  }
+  if (/EHOSTUNREACH|ENETUNREACH|No route to host/i.test(message)) {
+    return '服务器不可达：请检查网络或防火墙';
+  }
+  if (/ECONNRESET|socket hang up|Connection reset/i.test(message)) {
+    return 'SSH 连接中断：服务器可能关闭了连接';
+  }
+  if (/sudo password is required/i.test(message)) {
+    return '缺少 sudo 密码：该服务器需要 sudo 权限';
+  }
+  return `SSH 连接失败：${message}`;
+}
+
+function canUseSudo(server) {
+  if (!server || server.username === 'root') return false;
+  return Boolean(server.sudo_password || server.auth_type === 'password');
+}
+
+export function buildNodeStatuses(nodes = [], configData = null, tcpPorts = [], udpPorts = []) {
+  const tcpSet = new Set(tcpPorts.map(Number));
+  const udpSet = new Set(udpPorts.map(Number));
+  const inbounds = Array.isArray(configData?.inbounds) ? configData.inbounds : [];
+  return (nodes || []).map((node) => {
+    const port = Number(node.port);
+    const inbound = inbounds.find((item) => Number(item.port) === port && String(item.protocol) === String(node.protocol));
+    return {
+      id: node.id,
+      name: node.name,
+      protocol: node.protocol,
+      port,
+      role: node.role || 'inbound',
+      enabled: node.enabled,
+      in_config: Boolean(inbound),
+      config_tag: inbound?.tag || '',
+      listening_tcp: tcpSet.has(port),
+      listening_udp: udpSet.has(port),
+      listening: tcpSet.has(port) || udpSet.has(port)
+    };
+  });
+}
+
+export async function xrayStatus(server, nodes = [], options = {}) {
+  const startedAt = Date.now();
+  let result;
+  try {
+    const timeout = options.timeout || 20000;
+    result = await runScript(server, STATUS_SCRIPT, { timeout });
+  } catch (error) {
+    return {
+      ok: false,
+      checked_at: new Date().toISOString(),
+      ssh: { connected: false, error: classifySshError(error) },
+      xray: null,
+      config: null,
+      ports: [],
+      nodes: [],
+      elapsed_ms: Date.now() - startedAt,
+      listening: ''
+    };
+  }
+
+  const fields = parseStatusOutput(result.stdout);
+  const tcpPorts = parsePortList(fields.TCP_PORTS);
+  const udpPorts = parsePortList(fields.UDP_PORTS);
+
+  let configB64 = fields.CONFIG_B64 || '';
+  if (fields.CONFIG_EXISTS === 'yes' && !configB64 && canUseSudo(server)) {
+    try {
+      const configPath = fields.CONFIG_PATH || '/usr/local/etc/xray/config.json';
+      const sudoResult = await runSudo(server, READ_CONFIG_AS_ROOT_SCRIPT(configPath), { timeout: 15000 });
+      const sudoFields = parseStatusOutput(sudoResult.stdout);
+      if (sudoFields.CONFIG_B64) configB64 = sudoFields.CONFIG_B64;
+    } catch { /* keep the config marked unreadable */ }
+  }
+
+  let configData = null;
+  let configValid = null;
+  let configSha256 = null;
+  if (configB64) {
+    try {
+      const configRaw = Buffer.from(configB64, 'base64');
+      configSha256 = createHash('sha256').update(configRaw).digest('hex');
+      configData = JSON.parse(configRaw.toString('utf8'));
+      configValid = Boolean(configData);
+    } catch {
+      configValid = false;
+    }
+  }
+
+  const installed = fields.XRAY_BIN !== 'not-installed';
+  const active = fields.XRAY_ACTIVE || 'unknown';
+  const running = ['active', 'started'].includes(active);
+  const allPorts = [...new Set([...tcpPorts, ...udpPorts])];
+
   return {
     ok: true,
-    xray: {
-      installed: fields.XRAY_BIN !== 'not-installed',
-      bin: fields.XRAY_BIN,
-      version: fields.XRAY_VERSION,
-      active: fields.XRAY_ACTIVE,
-      enabled: fields.XRAY_ENABLED
+    checked_at: new Date().toISOString(),
+    ssh: {
+      connected: true,
+      host: server.host,
+      port: Number(server.port || 22),
+      username: server.username
     },
-    listening: result.stdout
+    xray: {
+      installed,
+      bin_present: fields.XRAY_BIN_PRESENT === 'yes',
+      bin: installed ? fields.XRAY_BIN : '',
+      version: fields.XRAY_VERSION || '',
+      active,
+      enabled: fields.XRAY_ENABLED || 'unknown',
+      running
+    },
+    config: {
+      exists: fields.CONFIG_EXISTS === 'yes',
+      readable: Boolean(configB64),
+      valid: configValid,
+      path: fields.CONFIG_PATH || '/usr/local/etc/xray/config.json'
+      ,
+      sha256: configSha256
+    },
+    ports: {
+      available: fields.TCP_PORTS !== undefined || fields.UDP_PORTS !== undefined,
+      tcp: tcpPorts,
+      udp: udpPorts
+    },
+    nodes: buildNodeStatuses(nodes, configData, tcpPorts, udpPorts),
+    elapsed_ms: Date.now() - startedAt,
+    listening: allPorts.join(', ')
   };
 }
 

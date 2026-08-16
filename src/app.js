@@ -10,19 +10,32 @@ import {
   getServerPublic,
   getServerRecord,
   getStats,
+  getServerStatus,
   listAllNodes,
   listNodes,
   listRoutes,
   listRoutesForServer,
   listServers,
+  listServerStatuses,
+  listRepairLogs,
   saveNode,
   saveRoute,
   saveServer
 } from './db.js';
 import { deployServer, installXray, probeServer, restartXray, xrayLogs, xrayStatus } from './remote.js';
+import { deriveServerState, getStatusIntervalSeconds } from './status.js';
+import { deriveDriftType } from './status.js';
+import { performRepair, routesForServer } from './repair.js';
 import { generateRealityKeypair, nodeLinks } from './xray.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+const DRIFT_REASONS = {
+  service_stopped: 'Xray 服务未运行',
+  config_missing: 'config.json 不存在',
+  config_mismatch: 'config.json 与面板期望不一致',
+  binary_missing: '/usr/local/bin/xray 不存在'
+};
 const publicDir = join(here, '..', 'public');
 const lucidePath = join(here, '..', 'node_modules', 'lucide', 'dist', 'umd', 'lucide.js');
 const lucideMinPath = join(here, '..', 'node_modules', 'lucide', 'dist', 'umd', 'lucide.min.js');
@@ -72,6 +85,40 @@ app.get('/api/stats', (req, res) => {
   res.json(getStats());
 });
 
+app.get('/api/status', (req, res) => {
+  const statusRows = new Map(listServerStatuses().map((row) => [row.server_id, row]));
+  const servers = listServers().map((server) => {
+    const cached = statusRows.get(server.id) || null;
+    const { node_status: cachedNodeStatus, node_status_json: _, ...cachedFields } = cached || {};
+    const nodes = listNodes(server.id).map((node) => {
+      const nodeStatus = (cachedNodeStatus || []).find((item) => item.id === node.id) || null;
+      return {
+        id: node.id,
+        name: node.name,
+        protocol: node.protocol,
+        port: node.port,
+        role: node.role,
+        enabled: node.enabled,
+        ...(nodeStatus || {})
+      };
+    });
+    const drift = deriveDriftType(cached);
+    return {
+      server,
+      state: deriveServerState(cached),
+      drift,
+      drift_reason: drift ? DRIFT_REASONS[drift] : null,
+      status: cachedFields || null,
+      nodes
+    };
+  });
+  res.json({
+    generated_at: new Date().toISOString(),
+    interval_seconds: getStatusIntervalSeconds(),
+    servers
+  });
+});
+
 app.get('/api/servers', (req, res) => {
   res.json(listServers());
 });
@@ -110,7 +157,7 @@ app.post('/api/servers/:id/test', asyncHandler(async (req, res) => {
 app.get('/api/servers/:id/status', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
-  res.json(await xrayStatus(server));
+  res.json(await xrayStatus(server, listNodes(req.params.id)));
 }));
 
 app.post('/api/servers/:id/install', asyncHandler(async (req, res) => {
@@ -136,16 +183,27 @@ app.post('/api/servers/:id/deploy', asyncHandler(async (req, res) => {
   if (!server) return res.status(404).json({ error: 'server not found' });
   const nodes = listNodes(req.params.id);
   if (!nodes.length) return res.status(400).json({ error: 'add at least one node before deploy' });
-  const routes = listRoutesForServer(req.params.id).map((route) => {
-    const outboundNode = getNode(route.outbound_node_id);
-    return {
-      ...route,
-      outbound_node: outboundNode,
-      outbound_server: outboundNode ? getServerPublic(outboundNode.server_id) : null
-    };
-  }).filter((route) => route.outbound_node && route.outbound_server);
+  const routes = routesForServer(req.params.id);
   res.json(await deployServer(server, nodes, { routes }));
 }));
+
+app.post('/api/servers/:id/repair', asyncHandler(async (req, res) => {
+  const server = getServerRecord(req.params.id);
+  if (!server) return res.status(404).json({ error: 'server not found' });
+  const cached = getServerStatus(server.id);
+  if (!cached) return res.status(400).json({ error: '尚无状态缓存，请等待巡检完成后再试' });
+  if (!cached.ssh_reachable) return res.status(409).json({ error: '服务器离线，无法执行修复' });
+  const drift = deriveDriftType(cached);
+  if (!drift) return res.status(400).json({ error: '当前没有需要修复的漂移' });
+  if (req.body?.drift_type && req.body.drift_type !== drift) {
+    return res.status(409).json({ error: '漂移类型已变化，请刷新后重试' });
+  }
+  res.json(await performRepair(server, drift));
+}));
+
+app.get('/api/repair-logs', (req, res) => {
+  res.json(listRepairLogs(Number(req.query.limit || 100)));
+});
 
 app.get('/api/servers/:id/logs', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);
