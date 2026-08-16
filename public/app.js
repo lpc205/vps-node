@@ -2687,6 +2687,16 @@ function wireEvents() {
   });
 
   $('#subscription-grid').addEventListener('click', (event) => {
+    const copyButton = event.target.closest('[data-sub-copy]');
+    if (copyButton) {
+      copySubscriptionAddress(copyButton.dataset.subCopy, copyButton.dataset.format, copyButton);
+      return;
+    }
+    const qrButton = event.target.closest('[data-sub-qr]');
+    if (qrButton) {
+      openSubscriptionQr(qrButton.dataset.subQr, qrButton.dataset.format);
+      return;
+    }
     const button = event.target.closest('[data-sub-action]');
     if (!button) return;
     runSubscriptionAction(button.dataset.subAction, button.dataset.id, button);
