@@ -13,6 +13,29 @@
 - Xray `config.json` 统一由面板生成并写入，避免手工 SSH 改配置。
 - 本地面板默认只监听本机或 Docker 绑定 `127.0.0.1:3000`。
 
+## 默认发布与同步规则
+
+以后每次对项目代码、前端、配置或文档做出完成性的修改，默认执行以下流程，不需要再次单独提醒：
+
+1. 先检查 `git status`、现有本地改动和敏感文件，确认不包含 `data/`、密码、私钥、Token、`.env` 或其他本地运行数据。
+2. 完成修改后运行 `npm test`；涉及前端时同时检查桌面和窄屏页面，涉及部署时检查健康接口和容器状态。
+3. 在当前工作分支提交 Git commit。常规完成分支为 `main`；如果用户明确要求功能分支，则先在功能分支完成，再合并到 `main`。
+4. 推送到 GitHub：`origin/main`，远程仓库为 `https://github.com/lpc205/vps-node.git`。
+5. 同步到飞牛 NAS：
+   - 地址：`192.168.1.4`
+   - 项目目录：`/vol1/1000/Docker/vps-node-console`
+   - 只同步项目源代码和必要配置，不覆盖 NAS 上的 `data/`、运行时数据或凭据。
+   - 使用 NAS 现有的 `docker-compose.fnos.yml` 与 `Dockerfile.fnos-offline` 离线构建。
+   - 通过 `docker compose -f docker-compose.fnos.yml up -d --build --force-recreate` 重建服务。
+   - 重建后检查 `docker compose ps`、容器健康状态、`http://127.0.0.1:3000/api/health` 和关键功能接口。
+6. GitHub 推送或 NAS 更新任一步骤失败时，必须在最终说明中明确失败环节、已完成环节和恢复方式，不得声称同步成功。
+
+NAS 更新注意事项：
+
+- NAS 当前使用 `network_mode: host`，服务端口为 `3000`。
+- NAS 离线镜像依赖项目目录内已有的 `node_modules` 和 `node-runtime/bin/node`，不能只用普通 `Dockerfile` 替换离线构建文件。
+- 不要把 NAS 的管理员密码、面板数据库、`.secret`、SSH 私钥或订阅 Token 写入 Git、日志、README 或本文件。
+
 ## 开发历程摘要
 
 按用户实际提出需求的顺序，已完成以下内容：
@@ -33,6 +56,9 @@
 14. 漂移修复：状态区分服务停止/配置缺失/配置不一致/二进制缺失；服务器与节点卡片显示“已漂移”标签和原因，提供“一键修复”确认后执行，全部写入 `repair_logs` 审计；自动修复开关默认关闭，开启后仅自动提示服务停止类漂移。
 15. 前端 UX 优化：服务器/节点状态按钮统一为“状态”；“一键修复”按漂移类型显示“恢复服务 / 恢复配置 / 重新部署”；危险操作改为自定义确认弹窗并说明影响；空状态带图标与引导按钮；toast 区分成功/错误/信息；卡片展示缓存“最近检查”时间，状态弹窗标注“实时”。
 16. 视觉与体验统一：收敛设计令牌，统一侧边栏激活态、卡片层级、工具栏与状态展示；添加服务器表单分组为“连接信息 / 认证方式 / 备注”并支持密码、私钥、sudo 密码显示切换；移动端改为顶部导航并在窄屏下无横向溢出。
+17. 订阅管理：订阅动态包含所有 `role = inbound` 且 `enabled = 1` 的节点，复用现有分享链接生成逻辑，支持 Base64、原始 URI、预览、二维码和缓存校验；订阅 Token 使用安全随机值生成，数据库保存哈希和加密 Token，不记录明文 Token。
+18. 订阅页面简化：订阅功能集成到总览页，只保留一个自动生成的默认订阅；取消多订阅选择、手动节点关联和过期时间控制；Base64 与 URI 地址始终可复制或生成二维码，刷新页面后地址保持不变。
+19. 发布同步：项目当前默认在完成修改后提交并推送 GitHub `main`，再使用飞牛 NAS 的离线 Docker 配置重建并检查健康状态。
 
 ## 当前页面与入口
 
@@ -42,6 +68,7 @@
 | 服务器 | 管理 SSH 目标 | 添加、粘贴识别保存、状态、一键修复、编辑、删除、日志、终端 |
 | 节点 | 管理指定服务器上的节点 | 添加/编辑/删除节点、状态、一键修复、分享链接、部署全部节点 |
 | 路由 | 管理入站到出站的转发链路 | 选择入站/出站节点、连接所选节点、断开链路 |
+| 订阅 | 已集成在总览页的订阅区域 | 查看默认地址、复制 Base64/URI 地址、显示二维码 |
 
 服务器卡片当前按钮为：`一键修复（漂移时）/ 状态 / 终端 / 日志 / 编辑 / 删除`。漂移时卡片显示“已漂移”标签和原因；节点卡片同样展示漂移标签与一键修复。服务器页工具栏有默认关闭的“自动修复”开关。
 
@@ -54,6 +81,7 @@
   -> SSH 执行层 (src/ssh.js)
   -> 远程脚本 (src/remote.js)
   -> Xray 配置生成 (src/xray.js)
+  -> 订阅转换与 Token 管理 (src/subscriptions.js / src/subscription-token.js)
   -> VPS 上的 Xray
 ```
 
@@ -71,7 +99,7 @@ WebSocket 终端：
 
 ```text
 public/
-  index.html        单页结构：总览/服务器/节点/路由
+  index.html        单页结构：总览/服务器/节点/路由；总览内包含订阅区域
   app.js            前端状态、渲染、弹窗、事件、终端
   styles.css        样式
 src/
@@ -85,12 +113,17 @@ src/
   xray.js           Xray config 生成、分享链接、Reality 密钥对
   status.js         自动状态巡检调度、状态派生、配置 sha256 一致性
   repair.js         漂移修复执行、动作映射、审计日志写入
+  subscriptions.js  订阅节点筛选、URI/Base64 内容生成、ETag 和访问记录
+  subscription-token.js 订阅 Token 的生成、哈希和前缀处理
 test/
   xray.test.js      配置生成与链接测试
   status.test.js    状态派生与缓存记录测试
+  subscription.test.js 订阅创建、访问、筛选、Token 轮换、二维码和空订阅测试
 data/               运行数据（不提交）：panel.db、.secret
 Dockerfile
 docker-compose.yml
+Dockerfile.fnos-offline  飞牛 NAS 离线镜像构建文件（NAS 部署使用）
+docker-compose.fnos.yml  飞牛 NAS host 网络部署配置（NAS 目录中维护）
 ```
 
 ## 数据模型
@@ -138,6 +171,17 @@ docker-compose.yml
 - `drift_type`：`service_stopped / config_missing / config_mismatch / binary_missing`
 - `action`：`restart / write_config_restart / redeploy`
 - `result / success / created_at`：执行结果、成败标记、审计时间
+
+### subscriptions
+
+- `id / name`
+- `token_hash`：订阅 Token 的哈希值，用于公开接口校验
+- `token_ciphertext`：使用本地 AES 密钥加密保存的 Token，用于面板在刷新后恢复可复制地址
+- `token_prefix`：仅用于识别和展示，不是完整 Token
+- `enabled / default_format / expires_at`
+- `last_access_at / access_count / created_at / updated_at`
+
+订阅不保存 `subscription_nodes` 关联表。每次访问和预览都动态查询 `nodes`，只包含启用的入口节点；默认订阅的过期时间固定为空，公开接口仍保留过期校验兼容能力。
 
 ### 本地文件
 
@@ -203,6 +247,15 @@ docker-compose.yml
 3. 通过 WebSocket 建立 SSH shell，输入和 resize 实时双向同步。
 4. 关闭弹窗时断开 WebSocket 并释放 SSH 连接。
 
+### 订阅流程
+
+1. 总览页加载时调用 `GET /api/subscriptions`，自动确保默认订阅存在。
+2. 默认订阅动态筛选 `role = 'inbound' AND enabled = 1` 的节点，排除出站、禁用和已删除节点。
+3. 通过 `xray.js` 的现有分享链接能力生成多行 URI；`format=base64` 时再进行 Base64 编码。
+4. 面板显示固定的 Base64 与 URI 地址，复制失败时自动选中只读输入框作为降级方案；二维码在本地生成，不上传订阅地址到第三方服务。
+5. 公开访问接口只读本地数据库和节点分享数据，不触发 SSH、不修改 VPS；使用 ETag 和访问统计。
+6. 订阅没有手动节点选择器、服务器选择器或多订阅卡片列表。
+
 ## API 摘要
 
 - `GET /api/health`、`GET /api/stats`
@@ -228,6 +281,13 @@ docker-compose.yml
 - `GET /api/routes`
 - `POST /api/routes`
 - `DELETE /api/routes/:id`
+- `GET /api/subscriptions`：返回单个默认订阅和可复制地址
+- `POST /api/subscriptions`、`GET /api/subscriptions/:id`、`PUT /api/subscriptions/:id`
+- `DELETE /api/subscriptions/:id`
+- `POST /api/subscriptions/:id/rotate`、`POST /api/subscriptions/:id/enable`、`POST /api/subscriptions/:id/disable`
+- `GET /api/subscriptions/:id/preview`
+- `POST /api/subscriptions/qr`：本地生成订阅二维码
+- `GET /sub/:token`、`GET /sub/:token?format=base64`、`GET /sub/:token?format=uri`
 - `WS /ws/terminal?serverId=...`
 
 ## 开发与验证
@@ -236,7 +296,7 @@ docker-compose.yml
 npm install
 npm run dev       # 打开 http://127.0.0.1:3000
 npm start
-npm test          # 当前 15 个 node:test 用例
+npm test          # 当前 24 个 node:test 用例
 ```
 
 Docker：
@@ -244,6 +304,17 @@ Docker：
 ```bash
 docker compose up -d --build
 ```
+
+飞牛 NAS：
+
+```bash
+cd /vol1/1000/Docker/vps-node-console
+sudo docker compose -f docker-compose.fnos.yml up -d --build --force-recreate
+sudo docker compose -f docker-compose.fnos.yml ps
+curl http://127.0.0.1:3000/api/health
+```
+
+NAS 使用 host 网络，因此容器内 SSH 出站连接使用 NAS 主机网络；订阅地址默认应使用客户端能够访问的 NAS 局域网地址、VPN 地址或反向代理地址，而不是固定写死 `127.0.0.1`。
 
 要求 Node.js >= 22.5。
 
@@ -278,10 +349,12 @@ docker compose up -d --build
 - 远程仓库：`https://github.com/lpc205/vps-node.git`，默认分支 `main`。
 - `core.hooksPath=.githooks`，`post-commit` hook 会把当前分支提交自动推送到已配置 upstream。
 - `.github/workflows/ci.yml` 在 push 到 `main/master` 时运行 `npm test`。
-- 新功能完成后在 `main` 上执行 `git add -A && git commit` 即可自动同步；若 hook 未触发则手动 `git push origin main`。
+- 修改完成后必须按“默认发布与同步规则”提交并推送；优先确认 `git log -1` 和 `git status`，确认 GitHub 已包含本次提交。
+- 若自动 `post-commit` hook 未触发，必须手动执行 `git push origin main`，不能把本地 commit 当作已同步。
 - `data/`、`node_modules/`、`.env` 已在 `.gitignore` 中，禁止提交面板凭据和本地数据。
 
 - 面板目前没有登录鉴权，默认只在本机或 Docker `127.0.0.1` 暴露。
 - `data/.secret`、私钥、密码、UUID 等不要提交或外传。
+- 订阅公开地址包含访问凭据，不能写入日志、截图、提交信息或文档；需要分享时通过面板复制或二维码传递。
 - 远程安装需要服务器能访问 GitHub Release；网络受限时可后续增加自定义下载源。
 - 后续可能方向：面板登录/操作审计、单节点单独热更新、批量状态巡检、3x-ui 配置迁移、流量统计、二维码分享。
