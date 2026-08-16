@@ -376,6 +376,44 @@ function setAutoRepairEnabled(value) {
   localStorage.setItem('auto_repair_enabled', value ? '1' : '0');
 }
 
+const STATUS_HISTORY_KEY = 'vps_status_history';
+const STATUS_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function readStatusHistory() {
+  try { return JSON.parse(localStorage.getItem(STATUS_HISTORY_KEY) || '{}'); } catch { return {}; }
+}
+
+function pruneStatusHistory(entries, now) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter((entry) => entry?.state && now - new Date(entry.at).getTime() <= STATUS_HISTORY_WINDOW_MS)
+    .slice(-48);
+}
+
+function recordStatusHistory(serverId, state, at = new Date().toISOString()) {
+  if (!serverId || !state) return;
+  const history = readStatusHistory();
+  const now = Date.parse(at) || Date.now();
+  const entries = pruneStatusHistory(history[serverId] || [], now);
+  const last = entries[entries.length - 1];
+  if (!last || last.state !== state) {
+    entries.push({ state, at: new Date(now).toISOString() });
+    history[serverId] = pruneStatusHistory(entries, now);
+    try { localStorage.setItem(STATUS_HISTORY_KEY, JSON.stringify(history)); } catch { /* keep memory only */ }
+  }
+}
+
+function statusHistoryFor(serverId) {
+  return pruneStatusHistory(readStatusHistory()[serverId] || [], Date.now());
+}
+
+function lastNormalTime(serverId) {
+  const entries = statusHistoryFor(serverId);
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index].state === 'running') return entries[index].at;
+  }
+  return '';
+}
+
 const THEME_ICONS = { light: 'sun', dark: 'moon', system: 'monitor' };
 const THEME_LABELS = { light: '亮色', dark: '暗色', system: '跟随系统' };
 
@@ -428,6 +466,9 @@ async function loadStatus() {
   try {
     const payload = await api('/api/status');
     state.statuses = Object.fromEntries(payload.servers.map((item) => [item.server.id, item]));
+    for (const item of payload.servers) {
+      recordStatusHistory(item.server.id, item.state, item.status?.last_checked_at || item.status?.updated_at || payload.generated_at);
+    }
     if (isAutoRepairEnabled()) {
       for (const item of payload.servers) {
         if (item.state === 'service_stopped' && item.server && !state.autoRepairNotified.has(item.server.id)) {
@@ -487,6 +528,7 @@ function renderServers() {
     const live = state.statuses[server.id];
     const statusBadge = live ? statusPill(live.state, cachedStatusTitle(live)) : statusPill('unknown');
     const drift = live?.drift || null;
+    const lastNormal = drift ? lastNormalTime(server.id) : '';
     const authLabel = server.auth_type === 'key' ? 'SSH Key' : '密码';
     return `
       <div class="server-card">
@@ -518,7 +560,7 @@ function renderServers() {
           </div>
           ${server.notes ? `<div class="hint">${escapeHtml(server.notes)}</div>` : ''}
           ${live?.status?.last_checked_at ? `<div class="status-checked"><span>最近检查</span><span>${escapeHtml(formatTime(live.status.last_checked_at))}</span><span class="hint">缓存</span></div>` : ''}
-          ${drift ? `<div class="drift-banner"><span class="badge red">已漂移</span><span>${escapeHtml(live.drift_reason || '')}</span></div>` : ''}
+          ${drift ? `<div class="drift-banner"><span class="badge red">已漂移</span><span>${escapeHtml(live.drift_reason || '')}</span>${lastNormal ? `<span class="hint">上次正常 ${escapeHtml(formatTime(lastNormal))}</span>` : ''}</div>` : ''}
         </div>
         <div class="card-actions">
           ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(server.id)}" data-drift="${escapeHtml(drift)}" title="${escapeHtml(repairActionLabel(drift))}"><i data-lucide="wrench"></i>${escapeHtml(repairActionLabel(drift))}</button>` : ''}
@@ -563,6 +605,7 @@ function renderNodes() {
     const clientCount = node.clients?.length || 0;
     const live = state.statuses[node.server_id];
     const drift = live?.drift || null;
+    const lastNormal = drift ? lastNormalTime(node.server_id) : '';
     const protocolRows = node.protocol === 'socks' ? '' : `
             <div class="kv">
               <span class="kv-label">传输</span>
@@ -604,7 +647,7 @@ function renderNodes() {
             ${protocolRows}
           </div>
           ${live?.status?.last_checked_at ? `<div class="status-checked"><span>最近检查</span><span>${escapeHtml(formatTime(live.status.last_checked_at))}</span><span class="hint">缓存</span></div>` : ''}
-          ${drift ? `<div class="drift-banner"><span class="badge red">已漂移</span><span>${escapeHtml(live.drift_reason || '')}</span></div>` : ''}
+          ${drift ? `<div class="drift-banner"><span class="badge red">已漂移</span><span>${escapeHtml(live.drift_reason || '')}</span>${lastNormal ? `<span class="hint">上次正常 ${escapeHtml(formatTime(lastNormal))}</span>` : ''}</div>` : ''}
         </div>
         <div class="card-actions">
           ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(node.id)}" data-drift="${escapeHtml(drift)}" title="${escapeHtml(repairActionLabel(drift))}"><i data-lucide="wrench"></i>${escapeHtml(repairActionLabel(drift))}</button>` : ''}
@@ -1768,6 +1811,18 @@ function openStatusModal(server, status) {
           <div class="status-section-head">
             <span>节点实际状态</span>
             <span>实时 · 最近检查 ${escapeHtml(formatTime(status.checked_at))}</span>
+          </div>
+          <div class="status-section-head">
+            <span>最近 24 小时状态变化</span>
+            <span>面板缓存</span>
+          </div>
+          <div class="status-history-list">
+            ${statusHistoryFor(server.id).slice().reverse().slice(0, 6).map((entry) => `
+              <div class="status-history-row">
+                ${statusPill(entry.state)}
+                <span>${escapeHtml(formatTime(entry.at))}</span>
+              </div>
+            `).join('') || '<div class="status-history-empty">暂无变化记录</div>'}
           </div>
           <div class="status-node-list">${nodeRows}</div>
           ` : ''}
