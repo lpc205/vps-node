@@ -373,7 +373,10 @@ function renderServers() {
       <div class="server-card">
         <div class="server-card-head">
           <h3 title="${escapeHtml(server.name)}">${escapeHtml(server.name)}</h3>
-          ${statusBadge}
+          <div class="card-head-badges">
+            ${badge('SSH')}
+            ${statusBadge}
+          </div>
         </div>
         <div class="server-body">
           <div class="kv-grid">
@@ -507,59 +510,83 @@ function openServerModal(server = null) {
           <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
         </div>
         <form id="server-form" class="modal-body">
-          <div class="form-grid">
-            <div class="field full">
-              <label>快速粘贴服务器信息</label>
-              <textarea id="server-paste" placeholder="支持：root@1.2.3.4:22 密码；1.2.3.4:22:root:密码；1.2.3.4 22 root 密码"></textarea>
-              <div class="paste-actions">
-                <button type="button" class="btn ghost sm" id="parse-server-btn" title="解析粘贴内容并填充表单"><i data-lucide="wand-2"></i>识别并填充</button>
-                <button type="button" class="btn primary sm" id="quick-save-server-btn" title="解析粘贴内容并直接保存"><i data-lucide="zap"></i>识别并保存</button>
+          <div class="form-section">
+            <div class="form-section-title">连接信息</div>
+            <div class="form-grid">
+              <div class="field full">
+                <label>快速粘贴服务器信息</label>
+                <textarea id="server-paste" placeholder="支持：root@1.2.3.4:22 密码；1.2.3.4:22:root:密码；1.2.3.4 22 root 密码"></textarea>
+                <div class="paste-actions">
+                  <button type="button" class="btn ghost sm" id="parse-server-btn" title="解析粘贴内容并填充表单"><i data-lucide="wand-2"></i>识别并填充</button>
+                  <button type="button" class="btn primary sm" id="quick-save-server-btn" title="解析粘贴内容并直接保存"><i data-lucide="zap"></i>识别并保存</button>
+                </div>
+              </div>
+              <div class="field full">
+                <label>名称</label>
+                <input name="name" required value="${escapeHtml(server?.name || '')}" placeholder="例如 香港主节点">
+              </div>
+              <div class="field">
+                <label>主机</label>
+                <input name="host" required value="${escapeHtml(server?.host || '')}" placeholder="IP 或域名">
+              </div>
+              <div class="field">
+                <label>SSH 端口</label>
+                <input name="port" type="number" min="1" max="65535" required value="${escapeHtml(server?.port || 22)}">
+              </div>
+              <div class="field full">
+                <label>用户名</label>
+                <input name="username" required value="${escapeHtml(server?.username || '')}" placeholder="root 或普通用户">
               </div>
             </div>
-            <div class="field full">
-              <label>名称</label>
-              <input name="name" required value="${escapeHtml(server?.name || '')}" placeholder="例如 香港主节点">
-            </div>
-            <div class="field">
-              <label>主机</label>
-              <input name="host" required value="${escapeHtml(server?.host || '')}" placeholder="IP 或域名">
-            </div>
-            <div class="field">
-              <label>SSH 端口</label>
-              <input name="port" type="number" min="1" max="65535" required value="${escapeHtml(server?.port || 22)}">
-            </div>
-            <div class="field full">
-              <label>用户名</label>
-              <input name="username" required value="${escapeHtml(server?.username || '')}" placeholder="root 或普通用户">
-            </div>
-            <div class="field full">
-              <label>认证方式</label>
-              <div class="segmented">
-                <button type="button" data-auth="password" class="${authType === 'password' ? 'active' : ''}">密码</button>
-                <button type="button" data-auth="key" class="${authType === 'key' ? 'active' : ''}">SSH Key</button>
+          </div>
+
+          <div class="form-section">
+            <div class="form-section-title">认证方式</div>
+            <div class="form-grid">
+              <div class="field full">
+                <label>认证方式</label>
+                <div class="segmented">
+                  <button type="button" data-auth="password" class="${authType === 'password' ? 'active' : ''}">密码</button>
+                  <button type="button" data-auth="key" class="${authType === 'key' ? 'active' : ''}">SSH Key</button>
+                </div>
+              </div>
+              <div class="field full auth-password" style="${authType === 'key' ? 'display:none' : ''}">
+                <label>密码</label>
+                <div class="field-row">
+                  <input name="password" type="password" autocomplete="new-password" placeholder="${isEdit ? '留空则保持现有密码' : 'SSH 登录密码'}">
+                  <button type="button" class="reveal-btn" data-reveal="input[name='password']">显示</button>
+                </div>
+                ${isEdit && server.has_password ? '<span class="hint">已保存密码，留空则保持不变。</span>' : ''}
+              </div>
+              <div class="field full auth-key" style="${authType === 'password' ? 'display:none' : ''}">
+                <label>私钥</label>
+                <div class="field-row">
+                  <textarea name="private_key" class="masked" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+                  <button type="button" class="reveal-btn" data-reveal="textarea[name='private_key']">显示</button>
+                </div>
+                ${isEdit && server.has_private_key ? '<span class="hint">已保存密钥，留空则保持不变。</span>' : ''}
+              </div>
+              <div class="field auth-key" style="${authType === 'password' ? 'display:none' : ''}">
+                <label>密钥口令</label>
+                <input name="passphrase" type="password" autocomplete="new-password" placeholder="可选">
+              </div>
+              <div class="field">
+                <label>sudo 密码</label>
+                <div class="field-row">
+                  <input name="sudo_password" type="password" autocomplete="new-password" placeholder="${server?.has_sudo_password ? '留空则保持不变' : '非 root 时填写'}">
+                  <button type="button" class="reveal-btn" data-reveal="input[name='sudo_password']">显示</button>
+                </div>
               </div>
             </div>
-            <div class="field full auth-password" style="${authType === 'key' ? 'display:none' : ''}">
-              <label>密码</label>
-              <input name="password" type="password" autocomplete="new-password" placeholder="${isEdit ? '留空则保持现有密码' : 'SSH 登录密码'}">
-              ${isEdit && server.has_password ? '<span class="hint">已保存密码，留空则保持不变。</span>' : ''}
-            </div>
-            <div class="field full auth-key" style="${authType === 'password' ? 'display:none' : ''}">
-              <label>私钥</label>
-              <textarea name="private_key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
-              ${isEdit && server.has_private_key ? '<span class="hint">已保存密钥，留空则保持不变。</span>' : ''}
-            </div>
-            <div class="field auth-key" style="${authType === 'password' ? 'display:none' : ''}">
-              <label>密钥口令</label>
-              <input name="passphrase" type="password" autocomplete="new-password" placeholder="可选">
-            </div>
-            <div class="field">
-              <label>sudo 密码</label>
-              <input name="sudo_password" type="password" autocomplete="new-password" placeholder="${server?.has_sudo_password ? '留空则保持不变' : '非 root 时填写'}">
-            </div>
-            <div class="field full">
-              <label>备注</label>
-              <textarea name="notes" placeholder="机房、用途等">${escapeHtml(server?.notes || '')}</textarea>
+          </div>
+
+          <div class="form-section">
+            <div class="form-section-title">备注</div>
+            <div class="form-grid">
+              <div class="field full">
+                <label>备注</label>
+                <textarea name="notes" placeholder="机房、用途等">${escapeHtml(server?.notes || '')}</textarea>
+              </div>
             </div>
           </div>
         </form>
@@ -578,6 +605,21 @@ function openServerModal(server = null) {
       $$('#modal-root .segmented button').forEach((item) => item.classList.toggle('active', item === button));
       $('#modal-root .auth-password').style.display = auth === 'password' ? '' : 'none';
       $('#modal-root .auth-key').style.display = auth === 'key' ? '' : 'none';
+    });
+  });
+
+  $$('#modal-root [data-reveal]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const target = $(button.dataset.reveal);
+      if (!target) return;
+      if (target.tagName === 'TEXTAREA') {
+        const revealed = target.classList.toggle('revealed');
+        button.textContent = revealed ? '隐藏' : '显示';
+      } else {
+        const revealed = target.type === 'text';
+        target.type = revealed ? 'password' : 'text';
+        button.textContent = revealed ? '显示' : '隐藏';
+      }
     });
   });
 
