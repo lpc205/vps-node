@@ -1342,31 +1342,15 @@ function openResultModal(title, text, raw = false) {
   `);
   $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
 }
-
-function openTerminalModal(server) {
+function startTerminalSession(server) {
   if (!server) return;
   closeTerminalSession();
-  setModal(`
-    <div class="modal-backdrop">
-      <div class="modal terminal-modal">
-        <div class="modal-head">
-          <h2>${escapeHtml(server.name)} SSH 终端</h2>
-          <div class="terminal-head-side">
-            <span id="terminal-status" class="terminal-status">连接中...</span>
-            <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
-          </div>
-        </div>
-        <div class="modal-body terminal-body">
-          <div id="terminal-host"></div>
-        </div>
-        <div class="terminal-foot">
-          <span>${escapeHtml(server.username)}@${escapeHtml(server.host)}:${escapeHtml(server.port)}</span>
-        </div>
-      </div>
-    </div>
-  `);
-
-  $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
+  const host = $('#terminal-host');
+  const statusEl = $('#terminal-status');
+  if (!host || !statusEl) return;
+  host.innerHTML = '';
+  statusEl.textContent = '连接中...';
+  statusEl.classList.remove('error');
 
   const term = new Terminal({
     cursorBlink: true,
@@ -1383,12 +1367,12 @@ function openTerminalModal(server) {
   const FitAddonClass = typeof FitAddon === 'function' ? FitAddon : FitAddon?.FitAddon;
   const fitAddon = new FitAddonClass();
   term.loadAddon(fitAddon);
-  term.open($('#terminal-host'));
-  fitAddon.fit();
+  term.open(host);
+  try { fitAddon.fit(); } catch { /* terminal may not have layout yet */ }
   term.focus();
 
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/terminal?serverId=${encodeURIComponent(server.id)}&cols=${term.cols}&rows=${term.rows}`);
-  terminalSession = { ws, term };
+  terminalSession = { ws, term, fitAddon };
 
   function setStatus(text, error = false) {
     const el = $('#terminal-status');
@@ -1449,6 +1433,52 @@ function openTerminalModal(server) {
   term.onResize(() => {
     sendResize();
   });
+}
+
+function openTerminalModal(server) {
+  if (!server) return;
+  closeTerminalSession();
+  setModal(`
+    <div class="modal-backdrop">
+      <div class="modal terminal-modal" id="terminal-modal">
+        <div class="modal-head">
+          <h2>${escapeHtml(server.name)} SSH 终端</h2>
+          <div class="terminal-head-side">
+            <span id="terminal-status" class="terminal-status">连接中...</span>
+            <button type="button" class="icon-btn" data-terminal-fullscreen title="全屏" aria-label="全屏"><i data-lucide="maximize-2"></i></button>
+            <button type="button" class="icon-btn" data-terminal-reconnect title="重新连接" aria-label="重新连接"><i data-lucide="refresh-cw"></i></button>
+            <button type="button" class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+          </div>
+        </div>
+        <div class="modal-body terminal-body">
+          <div id="terminal-host"></div>
+        </div>
+        <div class="terminal-foot">
+          <span>${escapeHtml(server.username)}@${escapeHtml(server.host)}:${escapeHtml(server.port)}</span>
+        </div>
+      </div>
+    </div>
+  `);
+
+  const modal = $('#terminal-modal');
+  const fullscreenButton = $('#modal-root [data-terminal-fullscreen]');
+  $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
+  if (fullscreenButton) {
+    fullscreenButton.addEventListener('click', () => {
+      const isFullscreen = modal.classList.toggle('fullscreen');
+      fullscreenButton.innerHTML = `<i data-lucide="${isFullscreen ? 'minimize-2' : 'maximize-2'}"></i>`;
+      fullscreenButton.title = isFullscreen ? '退出全屏' : '全屏';
+      fullscreenButton.setAttribute('aria-label', fullscreenButton.title);
+      refreshIcons();
+      requestAnimationFrame(() => {
+        if (terminalSession?.fitAddon) {
+          try { terminalSession.fitAddon.fit(); } catch { /* ignore */ }
+        }
+      });
+    });
+  }
+  $('#modal-root [data-terminal-reconnect]')?.addEventListener('click', () => startTerminalSession(server));
+  startTerminalSession(server);
 }
 
 function formatTime(value) {

@@ -1678,6 +1678,24 @@ textarea:focus-visible {
   height: min(78vh, 720px);
 }
 
+.terminal-modal.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 51;
+  width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border-radius: 0;
+  border: 0;
+}
+
+.terminal-modal .modal-head h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .terminal-modal .modal-body {
   flex: 1;
   display: flex;
@@ -1726,6 +1744,25 @@ textarea:focus-visible {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+@media (max-width: 560px) {
+  .terminal-head-side {
+    gap: 6px;
+  }
+  .terminal-head-side .icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+  .terminal-status {
+    max-width: 62px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .terminal-modal .modal-head {
+    padding: 0 12px;
+  }
 }
 
 /* Design system normalization */
