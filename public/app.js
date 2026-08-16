@@ -1717,9 +1717,13 @@ function openNodeModal(serverId, node = null) {
   const realityButton = $('#gen-reality-btn');
   if (realityButton) {
     realityButton.addEventListener('click', async () => {
-      if (!serverId) return;
+      const targetServerId = $('#node-server-id')?.value || initialServerId;
+      if (!targetServerId) {
+        toast('请先选择服务器后再生成 Reality 密钥对', 'error');
+        return;
+      }
       withBusy(realityButton, '生成中...', async () => {
-        const pair = await api(`/api/servers/${serverId}/x25519`, { method: 'POST' });
+        const pair = await api(`/api/servers/${targetServerId}/x25519`, { method: 'POST' });
         $('input[name="private_key"]').value = pair.privateKey;
         $('input[name="public_key"]').value = pair.publicKey;
         toast('Reality 密钥对已生成', 'success');
