@@ -3,3 +3,4 @@ data/
 .env
 *.log
 .playwright-cli/
+verify-*.png
