@@ -639,38 +639,29 @@ function renderServers({ motion = true } = {}) {
 }
 
 function renderNodes({ motion = true } = {}) {
-  const select = $('#node-server-select');
-  select.innerHTML = state.servers.length
-    ? state.servers.map((server) => `
-        <option value="${escapeHtml(server.id)}" ${server.id === state.selectedServerId ? 'selected' : ''}>
-          ${escapeHtml(server.name)} (${escapeHtml(server.host)})
-        </option>
-      `).join('')
-    : '<option value="">暂无服务器</option>';
-
-  $('#add-node-btn').disabled = !state.selectedServerId;
-  $('#deploy-server-btn').disabled = !state.selectedServerId;
-
   const grid = $('#node-grid');
-  const nodes = state.nodes.filter((node) => node.server_id === state.selectedServerId);
-  if (!state.selectedServerId) {
-    grid.innerHTML = state.servers.length
-      ? emptyState('请先选择目标服务器', { icon: 'server' })
-      : emptyState('请先添加服务器，再创建节点', { icon: 'server', action: 'go-servers', actionLabel: '添加服务器' });
+  $('#add-node-btn').disabled = !state.servers.length;
+
+  if (!state.servers.length) {
+    grid.innerHTML = emptyState('请先添加服务器，再创建节点', { icon: 'server', action: 'go-servers', actionLabel: '添加服务器' });
     if (motion) animateCollection(grid, '.empty-state');
     return;
   }
-  if (!nodes.length) {
-    grid.innerHTML = emptyState('该服务器还没有节点，点击“添加节点”', { icon: 'network', action: 'add-node', actionLabel: '添加节点' });
+
+  if (!state.nodes.length) {
+    grid.innerHTML = emptyState('还没有节点，点击“添加节点”', { icon: 'network', action: 'add-node', actionLabel: '添加节点' });
     if (motion) animateCollection(grid, '.empty-state');
     return;
   }
-  grid.innerHTML = nodes.map((node) => {
+
+  const renderNodeCard = (node) => {
     const security = node.security === 'reality' ? 'Reality' : node.security === 'tls' ? 'TLS' : '无加密';
     const clientCount = node.clients?.length || 0;
     const live = state.statuses[node.server_id];
     const drift = live?.drift || null;
     const lastNormal = drift ? lastNormalTime(node.server_id) : '';
+    const server = state.servers.find((item) => item.id === node.server_id);
+    const serverLabel = server ? `${server.name} · ${server.host}` : '未知服务器';
     const protocolRows = node.protocol === 'socks' ? '' : `
             <div class="kv">
               <span class="kv-label">传输</span>
@@ -696,6 +687,7 @@ function renderNodes({ motion = true } = {}) {
           </div>
         </div>
         <div class="node-body">
+          <div class="node-server-label" title="${escapeHtml(serverLabel)}"><i data-lucide="server"></i><span>${escapeHtml(serverLabel)}</span></div>
           <div class="kv-grid">
             <div class="kv">
               <span class="kv-label">协议</span>
@@ -723,8 +715,57 @@ function renderNodes({ motion = true } = {}) {
         </div>
       </div>
     `;
-  }).join('');
-  if (motion) animateCollection(grid, '.node-card');
+  };
+
+  const renderRoleSection = (role, title, description, tone) => {
+    const roleNodes = state.nodes.filter((node) => node.role === role);
+    if (!roleNodes.length) {
+      return `
+        <section class="node-role-section node-role-empty-section">
+          <div class="node-role-head">
+            <div class="node-role-title"><span class="role-mark ${role}"></span><div><h2>${title}</h2><span class="hint">${description}</span></div></div>
+            ${badge('0 个节点', tone)}
+          </div>
+          <div class="node-role-empty">暂无${title}节点</div>
+        </section>
+      `;
+    }
+
+    const serverIds = [...new Set(roleNodes.map((node) => node.server_id))];
+    return `
+      <section class="node-role-section">
+        <div class="node-role-head">
+          <div class="node-role-title"><span class="role-mark ${role}"></span><div><h2>${title}</h2><span class="hint">${description}</span></div></div>
+          ${badge(`${roleNodes.length} 个节点`, tone)}
+        </div>
+        <div class="node-server-groups">
+          ${serverIds.map((serverId) => {
+            const server = state.servers.find((item) => item.id === serverId);
+            const serverNodes = roleNodes.filter((node) => node.server_id === serverId);
+            const serverLabel = server ? `${server.name} · ${server.host}` : '未知服务器';
+            return `
+              <section class="node-server-group">
+                <div class="node-server-group-head">
+                  <div class="node-server-heading">
+                    <strong>${escapeHtml(serverLabel)}</strong>
+                    <span class="hint">${serverNodes.length} 个${title}节点</span>
+                  </div>
+                  ${server ? `<button class="btn sm accent" data-deploy-server="${escapeHtml(server.id)}" title="写入该服务器的全部节点配置并重启 Xray"><i data-lucide="upload-cloud"></i>部署</button>` : ''}
+                </div>
+                <div class="node-grid node-group-grid">${serverNodes.map(renderNodeCard).join('')}</div>
+              </section>
+            `;
+          }).join('')}
+        </div>
+      </section>
+    `;
+  };
+
+  grid.innerHTML = [
+    renderRoleSection('inbound', '入站', '客户端连接到这些节点', ''),
+    renderRoleSection('outbound', '出站', '这些节点作为转发出口', 'amber')
+  ].join('');
+  if (motion) animateCollection(grid, '.node-card, .node-role-section');
 }
 
 const SUBSCRIPTION_FORMAT_LABELS = { base64: 'Base64', uri: '原始 URI' };
@@ -1307,6 +1348,14 @@ function openServerModal(server = null) {
 
 function openNodeModal(serverId, node = null) {
   const isEdit = Boolean(node);
+  const initialServerId = node?.server_id || serverId || state.servers[0]?.id || '';
+  const serverOptions = state.servers.length
+    ? state.servers.map((server) => `
+        <option value="${escapeHtml(server.id)}" ${server.id === initialServerId ? 'selected' : ''}>
+          ${escapeHtml(server.name)} (${escapeHtml(server.host)})
+        </option>
+      `).join('')
+    : '<option value="">暂无服务器</option>';
   const clients = node?.clients?.length
     ? node.clients.map((client) => ({ ...client, security: client.security || 'auto' }))
     : [{ email: '', secret: '', flow: '', security: 'auto' }];
@@ -1325,6 +1374,13 @@ function openNodeModal(serverId, node = null) {
             <div class="field full">
               <label>名称</label>
               <input name="name" required value="${escapeHtml(node?.name || '')}" placeholder="例如 香港 443">
+            </div>
+            <div class="field full node-server-field">
+              <label for="node-server-id">使用服务器</label>
+              <select id="node-server-id" name="server_id" required ${isEdit ? 'disabled' : ''}>
+                ${serverOptions}
+              </select>
+              <span class="hint">${isEdit ? '编辑节点时不能更换所属服务器。' : '节点将保存到这里选择的服务器。'}</span>
             </div>
             <div class="field">
               <label>节点类型</label>
@@ -1720,6 +1776,8 @@ function openNodeModal(serverId, node = null) {
 
   async function saveAndDeploy(deploy) {
     const form = $('#node-form');
+    const targetServerId = isEdit ? serverId : form.querySelector('[name="server_id"]')?.value;
+    if (!targetServerId) throw new Error('请选择使用的服务器');
     const data = Object.fromEntries(new FormData(form).entries());
     data.role = $('#node-role-segmented button.active').dataset.role;
     data.port = Number(data.port);
@@ -1732,17 +1790,17 @@ function openNodeModal(serverId, node = null) {
     }));
     data.method = form.querySelector('[name="method"]')?.value || 'aes-256-gcm';
     data.ss_network = form.querySelector('[name="ss_network"]')?.value || 'tcp';
-    data.server_id = serverId;
+    data.server_id = targetServerId;
     try {
       let saved;
       if (isEdit) saved = await api(`/api/nodes/${node.id}`, { method: 'PUT', body: JSON.stringify(data) });
-      else saved = await api(`/api/servers/${serverId}/nodes`, { method: 'POST', body: JSON.stringify(data) });
+      else saved = await api(`/api/servers/${targetServerId}/nodes`, { method: 'POST', body: JSON.stringify(data) });
       closeModal();
       await loadAll();
       if (deploy) {
         openProgressModal('保存并部署', '正在部署服务器...');
         try {
-          const result = await api(`/api/servers/${serverId}/deploy`, { method: 'POST' });
+          const result = await api(`/api/servers/${targetServerId}/deploy`, { method: 'POST' });
           closeProgressModal();
           openResultModal('部署结果', result.restart?.stdout + '\n' + result.status?.listening || 'ok');
         } catch (error) {
@@ -2358,7 +2416,7 @@ function openConfirmModal({ title, message = [], confirmText = '确认', danger 
 
 function handleEmptyAction(action) {
   if (action === 'add-server') openServerModal();
-  if (action === 'add-node') openNodeModal(state.selectedServerId);
+  if (action === 'add-node') openNodeModal();
   if (action === 'add-subscription') openSubscriptionForm();
   if (action === 'go-servers') $$('.nav-item[data-view="servers"]')[0]?.click();
   if (action === 'go-nodes') $$('.nav-item[data-view="nodes"]')[0]?.click();
@@ -2489,6 +2547,24 @@ async function runNodeAction(action, nodeId, button) {
   }
 }
 
+async function deployServerNodes(serverId, button) {
+  const server = state.servers.find((item) => item.id === serverId);
+  if (!server) return;
+  await withBusy(button, '部署中...', async () => {
+    openProgressModal('部署节点', `正在部署「${server.name}」的全部节点...`);
+    try {
+      const result = await api(`/api/servers/${serverId}/deploy`, { method: 'POST' });
+      closeProgressModal();
+      openResultModal('部署结果', result.restart?.stdout + '\n' + result.status?.listening || '完成');
+      await loadAll();
+    } catch (error) {
+      closeProgressModal();
+      toast(error.message, 'error');
+      await loadAll();
+    }
+  });
+}
+
 function wireEvents() {
   $$('.nav-item').forEach((item) => {
     item.addEventListener('click', () => {
@@ -2541,33 +2617,10 @@ function wireEvents() {
       }
     });
   }
-  $('#add-node-btn').addEventListener('click', () => openNodeModal(state.selectedServerId));
+  $('#add-node-btn').addEventListener('click', () => openNodeModal());
   $('#add-subscription-btn').addEventListener('click', () => openSubscriptionForm());
   $('#overview-go-nodes').addEventListener('click', () => {
     $$('.nav-item[data-view="nodes"]')[0].click();
-  });
-
-  $('#node-server-select').addEventListener('change', (event) => {
-    state.selectedServerId = event.target.value;
-    renderNodes({ motion: true });
-  });
-
-  $('#deploy-server-btn').addEventListener('click', (event) => {
-    const button = event.currentTarget;
-    if (!state.selectedServerId) return;
-    withBusy(button, '部署中...', async () => {
-      openProgressModal('部署全部节点', '正在连接服务器并部署...');
-      try {
-        const result = await api(`/api/servers/${state.selectedServerId}/deploy`, { method: 'POST' });
-        closeProgressModal();
-        openResultModal('部署结果', result.restart?.stdout + '\n' + result.status?.listening || '完成');
-        await loadAll();
-      } catch (error) {
-        closeProgressModal();
-        toast(error.message, 'error');
-        await loadAll();
-      }
-    });
   });
 
   $('#server-grid').addEventListener('click', (event) => {
@@ -2577,6 +2630,11 @@ function wireEvents() {
   });
 
   $('#node-grid').addEventListener('click', (event) => {
+    const deployButton = event.target.closest('[data-deploy-server]');
+    if (deployButton) {
+      deployServerNodes(deployButton.dataset.deployServer, deployButton);
+      return;
+    }
     const button = event.target.closest('button[data-action]');
     if (!button) return;
     runNodeAction(button.dataset.action, button.dataset.id, button);
