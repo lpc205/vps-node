@@ -786,7 +786,8 @@ textarea {
   gap: 14px;
 }
 
-.server-grid > .empty-state {
+.server-grid > .empty-state,
+.subscription-grid > .empty-state {
   grid-column: 1 / -1;
   width: 100%;
 }
