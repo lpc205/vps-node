@@ -2150,7 +2150,7 @@ function wireEvents() {
       event.preventDefault();
       if (server) openTerminalModal(server);
     }
-  });
+  }, true);
 
   $('#modal-root').addEventListener('click', (event) => {
     if (event.target.classList.contains('modal-backdrop')) closeModal();
