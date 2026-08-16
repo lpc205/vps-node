@@ -42,6 +42,74 @@
   --focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.16);
 }
 
+:root {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #10161d;
+  --surface: #18212b;
+  --surface-2: #1f2a35;
+  --surface-3: #25313d;
+  --panel: #18212b;
+  --line: #2b3946;
+  --line-strong: #3b4c5b;
+  --ink: #e3ebf1;
+  --ink-strong: #f4f8fb;
+  --muted: #9fb0bf;
+  --primary: #2dd4bf;
+  --primary-soft: #123a37;
+  --accent: #818cf8;
+  --accent-soft: #262b52;
+  --success: #4ade80;
+  --success-soft: #12351f;
+  --warning: #fbbf24;
+  --warning-soft: #3a2c0d;
+  --danger: #f87171;
+  --danger-soft: #401a1a;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.25), 0 8px 20px rgba(0, 0, 0, 0.25);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.3), 0 12px 28px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] .modal-backdrop {
+  background: rgba(4, 8, 12, 0.62);
+}
+
+[data-theme="dark"] select,
+[data-theme="dark"] input,
+[data-theme="dark"] textarea {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+[data-theme="dark"] .segmented button.active {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .drift-banner,
+[data-theme="dark"] .status-error {
+  border-color: #7f3d3d;
+  background: var(--danger-soft);
+}
+
+[data-theme="dark"] .toast {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+[data-theme="dark"] .route-node.selected {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+[data-theme="dark"] .auto-repair-toggle .switch {
+  background: #46586a;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -58,6 +126,7 @@ body {
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   font-size: 14px;
   letter-spacing: 0;
+  transition: background-color 0.18s ease, color 0.18s ease;
 }
 
 html,

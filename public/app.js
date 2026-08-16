@@ -280,6 +280,29 @@ function setAutoRepairEnabled(value) {
   localStorage.setItem('auto_repair_enabled', value ? '1' : '0');
 }
 
+const THEME_ICONS = { light: 'sun', dark: 'moon', system: 'monitor' };
+const THEME_LABELS = { light: '亮色', dark: '暗色', system: '跟随系统' };
+
+function currentThemeMode() {
+  return localStorage.getItem('theme_preference') || 'system';
+}
+
+function systemPrefersDark() {
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches === true;
+}
+
+function setTheme() {
+  const mode = currentThemeMode();
+  const dark = mode === 'dark' || (mode === 'system' && systemPrefersDark());
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  const button = $('#theme-toggle');
+  if (button) {
+    button.innerHTML = `<i data-lucide="${THEME_ICONS[mode]}"></i>`;
+    button.title = `主题：${THEME_LABELS[mode]}，点击切换`;
+  }
+  refreshIcons();
+}
+
 async function loadAll() {
   try {
     const [servers, nodes, stats, routes] = await Promise.all([
@@ -1756,6 +1779,19 @@ function wireEvents() {
   });
 
   $('#refresh-btn').addEventListener('click', loadAll);
+  const themeButton = $('#theme-toggle');
+  if (themeButton) {
+    themeButton.addEventListener('click', () => {
+      const modes = ['light', 'dark', 'system'];
+      const next = modes[(modes.indexOf(currentThemeMode()) + 1) % modes.length];
+      localStorage.setItem('theme_preference', next);
+      setTheme();
+    });
+    window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', () => {
+      if (currentThemeMode() === 'system') setTheme();
+    });
+  }
+  setTheme();
   $('#add-server-btn').addEventListener('click', () => openServerModal());
   const autoRepairSwitch = $('#auto-repair-switch');
   if (autoRepairSwitch) {
