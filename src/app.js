@@ -1,0 +1,225 @@
+import express from 'express';
+import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import {
+  deleteNode,
+  deleteRoute,
+  deleteServer,
+  getNode,
+  getServerPublic,
+  getServerRecord,
+  getStats,
+  listAllNodes,
+  listNodes,
+  listRoutes,
+  listRoutesForServer,
+  listServers,
+  saveNode,
+  saveRoute,
+  saveServer
+} from './db.js';
+import { deployServer, installXray, probeServer, restartXray, xrayLogs, xrayStatus } from './remote.js';
+import { generateRealityKeypair, nodeLinks } from './xray.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const publicDir = join(here, '..', 'public');
+const lucidePath = join(here, '..', 'node_modules', 'lucide', 'dist', 'umd', 'lucide.js');
+const lucideMinPath = join(here, '..', 'node_modules', 'lucide', 'dist', 'umd', 'lucide.min.js');
+const xtermJsPath = join(here, '..', 'node_modules', '@xterm', 'xterm', 'lib', 'xterm.js');
+const xtermCssPath = join(here, '..', 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css');
+const xtermFitPath = join(here, '..', 'node_modules', '@xterm', 'addon-fit', 'lib', 'addon-fit.js');
+
+export const app = express();
+app.disable('x-powered-by');
+app.use(express.json({ limit: '1mb' }));
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  const start = Date.now();
+  res.on('finish', () => {
+    console.log(`[api] ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`);
+  });
+  next();
+});
+
+const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+function decorateNode(node) {
+  if (!node) return null;
+  const server = getServerRecord(node.server_id);
+  return { ...node, links: server ? nodeLinks(node, server) : [] };
+}
+
+function decorateRoute(route) {
+  const inboundNode = getNode(route.inbound_node_id);
+  const outboundNode = getNode(route.outbound_node_id);
+  if (!inboundNode || !outboundNode) return null;
+  return {
+    ...route,
+    inbound_node: { ...inboundNode, server: getServerPublic(inboundNode.server_id) },
+    outbound_node: { ...outboundNode, server: getServerPublic(outboundNode.server_id) }
+  };
+}
+
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, service: 'vps-node-console', version: '0.1.0' });
+});
+
+app.get('/api/stats', (req, res) => {
+  res.json(getStats());
+});
+
+app.get('/api/servers', (req, res) => {
+  res.json(listServers());
+});
+
+app.get('/api/servers/:id', (req, res) => {
+  const server = getServerPublic(req.params.id);
+  if (!server) return res.status(404).json({ error: 'server not found' });
+  res.json(server);
+});
+
+app.post('/api/servers', (req, res) => {
+  res.status(201).json(saveServer(req.body || {}));
+});
+
+app.put('/api/servers/:id', (req, res) => {
+  if (!getServerRecord(req.params.id)) {
+    return res.status(404).json({ error: 'server not found' });
+  }
+  res.json(saveServer(req.body || {}, req.params.id));
+});
+
+app.delete('/api/servers/:id', (req, res) => {
+  if (!deleteServer(req.params.id)) {
+    return res.status(404).json({ error: 'server not found' });
+  }
+  res.status(204).end();
+});
+
+app.post('/api/servers/:id/test', asyncHandler(async (req, res) => {
+  const server = getServerRecord(req.params.id);
+  if (!server) return res.status(404).json({ error: 'server not found' });
+  const probe = await probeServer(server);
+  res.json(probe);
+}));
+
+app.get('/api/servers/:id/status', asyncHandler(async (req, res) => {
+  const server = getServerRecord(req.params.id);
+  if (!server) return res.status(404).json({ error: 'server not found' });
+  res.json(await xrayStatus(server));
+}));
+
+app.post('/api/servers/:id/install', asyncHandler(async (req, res) => {
+  const server = getServerRecord(req.params.id);
+  if (!server) return res.status(404).json({ error: 'server not found' });
+  res.json(await installXray(server, { force: req.body?.force === true }));
+}));
+
+app.post('/api/servers/:id/restart', asyncHandler(async (req, res) => {
+  const server = getServerRecord(req.params.id);
+  if (!server) return res.status(404).json({ error: 'server not found' });
+  res.json(await restartXray(server));
+}));
+
+app.post('/api/servers/:id/x25519', asyncHandler(async (req, res) => {
+  const server = getServerRecord(req.params.id);
+  if (!server) return res.status(404).json({ error: 'server not found' });
+  res.json({ ok: true, ...generateRealityKeypair() });
+}));
+
+app.post('/api/servers/:id/deploy', asyncHandler(async (req, res) => {
+  const server = getServerRecord(req.params.id);
+  if (!server) return res.status(404).json({ error: 'server not found' });
+  const nodes = listNodes(req.params.id);
+  if (!nodes.length) return res.status(400).json({ error: 'add at least one node before deploy' });
+  const routes = listRoutesForServer(req.params.id).map((route) => {
+    const outboundNode = getNode(route.outbound_node_id);
+    return {
+      ...route,
+      outbound_node: outboundNode,
+      outbound_server: outboundNode ? getServerPublic(outboundNode.server_id) : null
+    };
+  }).filter((route) => route.outbound_node && route.outbound_server);
+  res.json(await deployServer(server, nodes, { routes }));
+}));
+
+app.get('/api/servers/:id/logs', asyncHandler(async (req, res) => {
+  const server = getServerRecord(req.params.id);
+  if (!server) return res.status(404).json({ error: 'server not found' });
+  const lines = Number(req.query.lines || 100);
+  res.json(await xrayLogs(server, lines));
+}));
+
+app.get('/api/servers/:id/nodes', (req, res) => {
+  if (!getServerRecord(req.params.id)) {
+    return res.status(404).json({ error: 'server not found' });
+  }
+  res.json(listNodes(req.params.id).map(decorateNode));
+});
+
+app.post('/api/servers/:id/nodes', (req, res) => {
+  if (!getServerRecord(req.params.id)) {
+    return res.status(404).json({ error: 'server not found' });
+  }
+  const node = saveNode({ ...req.body, server_id: req.params.id });
+  res.status(201).json(decorateNode(node));
+});
+
+app.put('/api/nodes/:id', (req, res) => {
+  if (!getNode(req.params.id)) {
+    return res.status(404).json({ error: 'node not found' });
+  }
+  res.json(decorateNode(saveNode(req.body || {}, req.params.id)));
+});
+
+app.delete('/api/nodes/:id', (req, res) => {
+  if (!deleteNode(req.params.id)) {
+    return res.status(404).json({ error: 'node not found' });
+  }
+  res.status(204).end();
+});
+
+app.get('/api/nodes', (req, res) => {
+  res.json(listAllNodes().map(decorateNode));
+});
+
+app.get('/api/routes', (req, res) => {
+  res.json(listRoutes().map(decorateRoute).filter(Boolean));
+});
+
+app.post('/api/routes', (req, res) => {
+  res.status(201).json(decorateRoute(saveRoute(req.body || {})));
+});
+
+app.delete('/api/routes/:id', (req, res) => {
+  if (!deleteRoute(req.params.id)) {
+    return res.status(404).json({ error: 'route not found' });
+  }
+  res.status(204).end();
+});
+
+app.use(express.static(publicDir));
+
+app.get('/vendor/lucide.js', (req, res) => {
+  const file = existsSync(lucideMinPath) ? lucideMinPath : lucidePath;
+  res.sendFile(file);
+});
+
+app.get('/vendor/xterm.js', (req, res) => res.sendFile(xtermJsPath));
+app.get('/vendor/xterm.css', (req, res) => res.sendFile(xtermCssPath));
+app.get('/vendor/xterm-fit.js', (req, res) => res.sendFile(xtermFitPath));
+
+app.use((err, req, res, next) => {
+  const status = err.status || 500;
+  const payload = { error: err.message || 'internal error' };
+  console.error(`[api-error] ${req.method} ${req.originalUrl} server=${req.params.id || '-'} ${err.message}`);
+  if (err.message?.includes('All configured authentication methods failed')) {
+    payload.error = 'SSH 认证失败：请检查用户名、密码或私钥';
+  }
+  if (err.remote) payload.remote = err.remote;
+  res.status(status).json(payload);
+});

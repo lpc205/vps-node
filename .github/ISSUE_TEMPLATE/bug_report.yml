@@ -1,0 +1,41 @@
+name: Bug 报告
+description: 报告一个可复现的问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: 请先搜索已有 Issue，避免重复。不要粘贴密码、私钥、sudo 密码等敏感信息。
+  - type: input
+    id: environment
+    attributes:
+      label: 运行环境
+      description: 操作系统、Node.js 或 Docker 版本、运行方式（本地 / Docker）。
+      placeholder: Windows 11 / Node 22.5 / Docker 27
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 发生了什么，以及你期望的行为。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 尽量给出从启动到问题出现的完整操作路径。
+      placeholder: |
+        1. 添加服务器 ...
+        2. 点击 ...
+        3. 看到 ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与截图
+      description: 后端终端输出、浏览器控制台报错或界面截图。注意脱敏。
+    validations:
+      required: false

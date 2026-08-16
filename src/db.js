@@ -1,0 +1,396 @@
+import { DatabaseSync } from 'node:sqlite';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { dataDir } from './paths.js';
+import { decryptText, encryptText, newId } from './crypto.js';
+
+mkdirSync(dataDir, { recursive: true });
+const db = new DatabaseSync(join(dataDir, 'panel.db'));
+
+db.exec(`
+PRAGMA journal_mode = WAL;
+
+CREATE TABLE IF NOT EXISTS servers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL DEFAULT 22,
+  username TEXT NOT NULL,
+  auth_type TEXT NOT NULL DEFAULT 'password',
+  password TEXT NOT NULL DEFAULT '',
+  private_key TEXT NOT NULL DEFAULT '',
+  passphrase TEXT NOT NULL DEFAULT '',
+  sudo_password TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS nodes (
+  id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'inbound',
+  port INTEGER NOT NULL,
+  network TEXT NOT NULL DEFAULT 'tcp',
+  security TEXT NOT NULL DEFAULT 'none',
+  sni TEXT NOT NULL DEFAULT '',
+  path TEXT NOT NULL DEFAULT '',
+  cert_file TEXT NOT NULL DEFAULT '',
+  key_file TEXT NOT NULL DEFAULT '',
+  dest TEXT NOT NULL DEFAULT '',
+  server_names TEXT NOT NULL DEFAULT '',
+  private_key TEXT NOT NULL DEFAULT '',
+  public_key TEXT NOT NULL DEFAULT '',
+  short_ids TEXT NOT NULL DEFAULT '',
+  clients_json TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_nodes_server ON nodes(server_id);
+
+CREATE TABLE IF NOT EXISTS routes (
+  id TEXT PRIMARY KEY,
+  inbound_node_id TEXT NOT NULL,
+  outbound_node_id TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(inbound_node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_routes_inbound ON routes(inbound_node_id);
+CREATE INDEX IF NOT EXISTS idx_routes_outbound ON routes(outbound_node_id);
+`);
+
+const nodeColumns = db.prepare('PRAGMA table_info(nodes)').all();
+if (!nodeColumns.some((column) => column.name === 'role')) {
+  db.exec("ALTER TABLE nodes ADD COLUMN role TEXT NOT NULL DEFAULT 'inbound'");
+}
+
+const now = () => new Date().toISOString();
+
+function publicServer(row) {
+  if (!row) return null;
+  const { password, private_key, passphrase, sudo_password, ...safe } = row;
+  return {
+    ...safe,
+    has_password: Boolean(password),
+    has_private_key: Boolean(private_key),
+    has_passphrase: Boolean(passphrase),
+    has_sudo_password: Boolean(sudo_password)
+  };
+}
+
+function parseNode(row) {
+  if (!row) return null;
+  return { ...row, clients: JSON.parse(row.clients_json || '[]') };
+}
+
+export function listServers() {
+  return db.prepare('SELECT * FROM servers ORDER BY created_at DESC').all().map(publicServer);
+}
+
+export function getServerRecord(id) {
+  return db.prepare('SELECT * FROM servers WHERE id = ?').get(id) || null;
+}
+
+export function getServerPublic(id) {
+  return publicServer(getServerRecord(id));
+}
+
+export function saveServer(input, id = null) {
+  const existing = id ? getServerRecord(id) : null;
+  const timestamp = now();
+  const authType = input.auth_type === 'key' ? 'key' : 'password';
+  const password = authType === 'password'
+    ? (input.password ? encryptText(input.password) : (existing && !input.clear_password ? existing.password : ''))
+    : '';
+  const privateKey = authType === 'key'
+    ? (input.private_key ? encryptText(input.private_key) : (existing && !input.clear_private_key ? existing.private_key : ''))
+    : '';
+  const passphrase = authType === 'key'
+    ? (input.passphrase ? encryptText(input.passphrase) : (existing && !input.clear_passphrase ? existing.passphrase : ''))
+    : '';
+  const sudoPassword = input.sudo_password
+    ? encryptText(input.sudo_password)
+    : (existing && !input.clear_sudo_password ? existing.sudo_password : '');
+
+  const data = {
+    name: String(input.name || '').trim(),
+    host: String(input.host || '').trim(),
+    port: Number(input.port || 22),
+    username: String(input.username || '').trim(),
+    auth_type: authType,
+    password,
+    private_key: privateKey,
+    passphrase,
+    sudo_password: sudoPassword,
+    notes: String(input.notes || '').trim()
+  };
+
+  if (!data.name || !data.host || !data.username) {
+    const error = new Error('name, host and username are required');
+    error.status = 400;
+    throw error;
+  }
+  if (!Number.isInteger(data.port) || data.port < 1 || data.port > 65535) {
+    const error = new Error('port must be between 1 and 65535');
+    error.status = 400;
+    throw error;
+  }
+  if (authType === 'key' && !data.private_key) {
+    const error = new Error('private key is required for key auth');
+    error.status = 400;
+    throw error;
+  }
+
+  if (existing) {
+    db.prepare(`
+      UPDATE servers SET
+        name = ?, host = ?, port = ?, username = ?, auth_type = ?,
+        password = ?, private_key = ?, passphrase = ?, sudo_password = ?,
+        notes = ?, updated_at = ?
+      WHERE id = ?
+    `).run(data.name, data.host, data.port, data.username, data.auth_type,
+      data.password, data.private_key, data.passphrase, data.sudo_password,
+      data.notes, timestamp, id);
+    return getServerPublic(id);
+  }
+
+  const serverId = newId();
+  db.prepare(`
+    INSERT INTO servers
+      (id, name, host, port, username, auth_type, password, private_key, passphrase, sudo_password, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(serverId, data.name, data.host, data.port, data.username, data.auth_type,
+    data.password, data.private_key, data.passphrase, data.sudo_password,
+    data.notes, timestamp, timestamp);
+  return getServerPublic(serverId);
+}
+
+export function deleteServer(id) {
+  const tx = db.exec('BEGIN');
+  try {
+    db.prepare(`
+      DELETE FROM routes
+      WHERE inbound_node_id IN (SELECT id FROM nodes WHERE server_id = ?)
+         OR outbound_node_id IN (SELECT id FROM nodes WHERE server_id = ?)
+    `).run(id, id);
+    db.prepare('DELETE FROM nodes WHERE server_id = ?').run(id);
+    const result = db.prepare('DELETE FROM servers WHERE id = ?').run(id);
+    db.exec('COMMIT');
+    return result.changes > 0;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export function listNodes(serverId) {
+  return db.prepare('SELECT * FROM nodes WHERE server_id = ? ORDER BY port ASC').all(serverId).map(parseNode);
+}
+
+export function getNode(id) {
+  return parseNode(db.prepare('SELECT * FROM nodes WHERE id = ?').get(id));
+}
+
+function normalizeClients(input) {
+  const clients = Array.isArray(input) && input.length > 0
+    ? input.map((client) => ({
+        email: String(client.email || '').trim(),
+        secret: String(client.secret || '').trim(),
+        flow: String(client.flow || '').trim()
+      }))
+    : [{ email: '', secret: newId(), flow: '' }];
+  return clients.map((client) => ({
+    ...client,
+    secret: client.secret || newId(),
+    flow: client.flow || ''
+  }));
+}
+
+export function saveNode(input, id = null) {
+  const existing = id ? getNode(id) : null;
+  const timestamp = now();
+  const protocol = String(input.protocol || '').trim();
+  const role = input.role === 'outbound' ? 'outbound' : 'inbound';
+  const network = String(input.network || 'tcp').trim();
+  const security = String(input.security || 'none').trim();
+  const port = Number(input.port);
+
+  if (!['vmess', 'vless', 'trojan', 'shadowsocks', 'socks'].includes(protocol)) {
+    const error = new Error('unsupported protocol');
+    error.status = 400;
+    throw error;
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    const error = new Error('port must be between 1 and 65535');
+    error.status = 400;
+    throw error;
+  }
+  if (!['tcp', 'ws', 'grpc', 'httpupgrade'].includes(network)) {
+    const error = new Error('unsupported network');
+    error.status = 400;
+    throw error;
+  }
+  if (!['none', 'tls', 'reality'].includes(security)) {
+    const error = new Error('unsupported security');
+    error.status = 400;
+    throw error;
+  }
+
+  const data = {
+    name: String(input.name || '').trim(),
+    protocol,
+    role,
+    network,
+    security,
+    port,
+    sni: String(input.sni || input.server_name || '').trim(),
+    path: String(input.path || '').trim(),
+    cert_file: String(input.cert_file || '').trim(),
+    key_file: String(input.key_file || '').trim(),
+    dest: String(input.dest || '').trim(),
+    server_names: String(input.server_names || '').trim(),
+    private_key: String(input.private_key || '').trim(),
+    public_key: String(input.public_key || '').trim(),
+    short_ids: String(input.short_ids || '').trim(),
+    clients_json: JSON.stringify(normalizeClients(input.clients)),
+    enabled: input.enabled === false || input.enabled === 0 ? 0 : 1
+  };
+
+  if (!data.name) {
+    const error = new Error('node name is required');
+    error.status = 400;
+    throw error;
+  }
+
+  if (existing) {
+    if (existing.role !== data.role) {
+      db.prepare('DELETE FROM routes WHERE inbound_node_id = ? OR outbound_node_id = ?').run(id, id);
+    }
+    db.prepare(`
+      UPDATE nodes SET
+        server_id = ?, name = ?, protocol = ?, role = ?, port = ?, network = ?,
+        security = ?, sni = ?, path = ?, cert_file = ?, key_file = ?,
+        dest = ?, server_names = ?, private_key = ?, short_ids = ?,
+        public_key = ?,
+        clients_json = ?, enabled = ?, updated_at = ?
+      WHERE id = ?
+    `).run(existing.server_id, data.name, data.protocol, data.role, data.port, data.network,
+      data.security, data.sni, data.path, data.cert_file, data.key_file,
+      data.dest, data.server_names, data.private_key, data.short_ids,
+      data.public_key,
+      data.clients_json, data.enabled, timestamp, id);
+    return getNode(id);
+  }
+
+  const nodeId = newId();
+  db.prepare(`
+    INSERT INTO nodes
+      (id, server_id, name, protocol, role, port, network, security, sni, path,
+       cert_file, key_file, dest, server_names, private_key, short_ids,
+       public_key,
+       clients_json, enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(nodeId, input.server_id, data.name, data.protocol, data.role, data.port, data.network,
+    data.security, data.sni, data.path, data.cert_file, data.key_file,
+    data.dest, data.server_names, data.private_key, data.short_ids,
+    data.public_key,
+    data.clients_json, data.enabled, timestamp, timestamp);
+  return getNode(nodeId);
+}
+
+export function deleteNode(id) {
+  const tx = db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM routes WHERE inbound_node_id = ? OR outbound_node_id = ?').run(id, id);
+    const result = db.prepare('DELETE FROM nodes WHERE id = ?').run(id);
+    db.exec('COMMIT');
+    return result.changes > 0;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export function getStats() {
+  const serverCount = db.prepare('SELECT COUNT(*) AS count FROM servers').get().count;
+  const nodeCount = db.prepare('SELECT COUNT(*) AS count FROM nodes').get().count;
+  const enabledCount = db.prepare('SELECT COUNT(*) AS count FROM nodes WHERE enabled = 1').get().count;
+  return { servers: serverCount, nodes: nodeCount, enabledNodes: enabledCount };
+}
+
+export function listRoutes() {
+  return db.prepare('SELECT * FROM routes ORDER BY created_at DESC').all();
+}
+
+export function getRoute(id) {
+  return db.prepare('SELECT * FROM routes WHERE id = ?').get(id) || null;
+}
+
+export function listRoutesForServer(serverId) {
+  return db.prepare(`
+    SELECT r.* FROM routes r
+    JOIN nodes n ON n.id = r.inbound_node_id
+    WHERE n.server_id = ?
+    ORDER BY r.created_at DESC
+  `).all(serverId);
+}
+
+export function saveRoute(input) {
+  const inboundNode = getNode(String(input.inbound_node_id || '').trim());
+  const outboundNode = getNode(String(input.outbound_node_id || '').trim());
+  if (!inboundNode || !outboundNode) {
+    const error = new Error('inbound and outbound nodes are required');
+    error.status = 400;
+    throw error;
+  }
+  if (inboundNode.id === outboundNode.id) {
+    const error = new Error('inbound and outbound nodes must be different');
+    error.status = 400;
+    throw error;
+  }
+  if (inboundNode.role !== 'inbound') {
+    const error = new Error('selected inbound node is not marked as inbound');
+    error.status = 400;
+    throw error;
+  }
+  if (outboundNode.role !== 'outbound') {
+    const error = new Error('selected outbound node is not marked as outbound');
+    error.status = 400;
+    throw error;
+  }
+
+  const existing = db.prepare('SELECT * FROM routes WHERE inbound_node_id = ?').get(inboundNode.id);
+  const timestamp = now();
+  if (existing) {
+    db.prepare('UPDATE routes SET outbound_node_id = ?, enabled = 1, updated_at = ? WHERE id = ?')
+      .run(outboundNode.id, timestamp, existing.id);
+    return getRoute(existing.id);
+  }
+
+  const routeId = newId();
+  db.prepare(`
+    INSERT INTO routes
+      (id, inbound_node_id, outbound_node_id, enabled, created_at, updated_at)
+    VALUES (?, ?, ?, 1, ?, ?)
+  `).run(routeId, inboundNode.id, outboundNode.id, timestamp, timestamp);
+  return getRoute(routeId);
+}
+
+export function deleteRoute(id) {
+  return db.prepare('DELETE FROM routes WHERE id = ?').run(id).changes > 0;
+}
+
+export function listAllNodes() {
+  return db.prepare(`
+    SELECT n.*, s.name AS server_name, s.host AS server_host
+    FROM nodes n JOIN servers s ON s.id = n.server_id
+    ORDER BY n.created_at DESC
+  `).all().map(parseNode);
+}
