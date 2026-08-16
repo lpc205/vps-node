@@ -433,7 +433,7 @@ button {
 
 .main {
   min-width: 0;
-  padding: 24px 28px 48px;
+  padding: clamp(18px, 2.2vw, 28px) clamp(16px, 2.4vw, 28px) clamp(40px, 4vw, 48px);
 }
 
 .topbar {
@@ -442,6 +442,12 @@ button {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 20px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.topbar > div:first-child {
+  min-width: 0;
 }
 
 .topbar h1 {
@@ -628,12 +634,17 @@ button {
 }
 
 .toolbar-copy {
+  min-width: 0;
+  flex: 1 1 240px;
   color: var(--muted);
   display: flex;
   align-items: end;
+  overflow-wrap: anywhere;
 }
 
 .toolbar-actions {
+  min-width: 0;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -771,7 +782,7 @@ textarea {
 .server-grid,
 .node-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
   gap: 14px;
 }
 
@@ -856,7 +867,7 @@ textarea {
 }
 
 .node-group-grid {
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
 }
 
 .node-role-empty {
@@ -1140,7 +1151,8 @@ textarea {
   z-index: 50;
   display: grid;
   place-items: center;
-  padding: 20px;
+  padding: clamp(12px, 2vw, 20px);
+  overflow: auto;
   background: rgba(15, 23, 42, 0.48);
   animation: backdrop-in 0.16s ease;
 }
@@ -1151,7 +1163,7 @@ textarea {
 
 .modal {
   width: min(680px, 100%);
-  max-height: min(88vh, 900px);
+  max-height: min(88dvh, 900px);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line-strong);
@@ -1187,6 +1199,7 @@ textarea {
 }
 
 .modal-body {
+  min-height: 0;
   padding: 18px;
   overflow: auto;
 }
@@ -1195,6 +1208,7 @@ textarea {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
   padding: 14px 18px;
   border-top: 1px solid var(--line);
   background: #fafcfd;
@@ -1816,6 +1830,61 @@ textarea:focus-visible {
   color: var(--teal);
 }
 
+@media (min-width: 861px) and (max-width: 1100px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    z-index: 40;
+    height: auto;
+    gap: 0;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .brand,
+  .sidebar-foot {
+    display: none;
+  }
+
+  .nav {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+  }
+
+  .nav-item {
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    min-height: 44px;
+    padding: 0 4px;
+    font-size: 11px;
+  }
+
+  .nav-item.active::before {
+    display: none;
+  }
+
+  .main {
+    padding: 20px 20px calc(88px + env(safe-area-inset-bottom));
+  }
+
+  .server-grid,
+  .node-group-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  }
+
+  .subscription-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  }
+}
+
 @media (max-width: 860px) {
   .app {
     grid-template-columns: 1fr;
@@ -1943,6 +2012,7 @@ textarea:focus-visible {
   background: var(--panel);
   cursor: pointer;
   position: relative;
+  min-width: 0;
   transition: transform var(--motion-normal) var(--ease-spring), border-color var(--motion-fast) ease, box-shadow var(--motion-normal) ease, background-color var(--motion-fast) ease;
 }
 
@@ -1990,9 +2060,13 @@ textarea:focus-visible {
   display: grid;
   justify-items: end;
   gap: 5px;
+  min-width: 0;
+  max-width: 45%;
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .route-link-list {
