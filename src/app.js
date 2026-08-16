@@ -18,15 +18,31 @@ import {
   listServers,
   listServerStatuses,
   listRepairLogs,
+  createSubscription,
+  deleteSubscription,
+  getSubscription,
+  listSubscriptions,
+  rotateSubscription,
   saveNode,
   saveRoute,
-  saveServer
+  saveServer,
+  setSubscriptionEnabled,
+  updateSubscription
 } from './db.js';
 import { deployServer, installXray, probeServer, restartXray, xrayLogs, xrayStatus } from './remote.js';
 import { deriveServerState, getStatusIntervalSeconds } from './status.js';
 import { deriveDriftType } from './status.js';
 import { performRepair, routesForServer } from './repair.js';
 import { generateRealityKeypair, nodeLinks } from './xray.js';
+import {
+  buildSubscriptionNodes,
+  isSubscriptionExpired,
+  markSubscriptionAccess,
+  renderBase64Subscription,
+  renderUriList,
+  resolvePublicSubscription,
+  subscriptionContent
+} from './subscriptions.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -74,6 +90,33 @@ function decorateRoute(route) {
     ...route,
     inbound_node: { ...inboundNode, server: getServerPublic(inboundNode.server_id) },
     outbound_node: { ...outboundNode, server: getServerPublic(outboundNode.server_id) }
+  };
+}
+
+function subscriptionWithToken(subscription, token) {
+  return {
+    subscription,
+    token,
+    subscription_path: `/sub/${token}`
+  };
+}
+
+function subscriptionPreview(id) {
+  const subscription = getSubscription(id);
+  if (!subscription) return null;
+  const { included, excluded } = buildSubscriptionNodes();
+  return {
+    subscription: {
+      ...subscription,
+      node_count: included.length
+    },
+    node_count: included.length,
+    link_count: included.reduce((count, node) => count + node.links.length, 0),
+    nodes: included.map(({ links, ...node }) => ({
+      ...node,
+      has_share_links: links.length > 0
+    })),
+    excluded
   };
 }
 
@@ -205,6 +248,80 @@ app.get('/api/repair-logs', (req, res) => {
   res.json(listRepairLogs(Number(req.query.limit || 100)));
 });
 
+app.get('/api/subscriptions', (req, res) => {
+  res.json(listSubscriptions());
+});
+
+app.post('/api/subscriptions', (req, res) => {
+  const result = createSubscription(req.body || {});
+  res.status(201).json(subscriptionWithToken(result.subscription, result.token));
+});
+
+app.get('/api/subscriptions/:id', (req, res) => {
+  const subscription = getSubscription(req.params.id);
+  if (!subscription) return res.status(404).json({ error: 'subscription not found' });
+  res.json(subscription);
+});
+
+app.put('/api/subscriptions/:id', (req, res) => {
+  const subscription = updateSubscription(req.params.id, req.body || {});
+  if (!subscription) return res.status(404).json({ error: 'subscription not found' });
+  res.json(subscription);
+});
+
+app.delete('/api/subscriptions/:id', (req, res) => {
+  if (!deleteSubscription(req.params.id)) {
+    return res.status(404).json({ error: 'subscription not found' });
+  }
+  res.status(204).end();
+});
+
+app.post('/api/subscriptions/:id/rotate', (req, res) => {
+  const result = rotateSubscription(req.params.id);
+  if (!result) return res.status(404).json({ error: 'subscription not found' });
+  res.json(subscriptionWithToken(result.subscription, result.token));
+});
+
+app.post('/api/subscriptions/:id/enable', (req, res) => {
+  const subscription = setSubscriptionEnabled(req.params.id, true);
+  if (!subscription) return res.status(404).json({ error: 'subscription not found' });
+  res.json(subscription);
+});
+
+app.post('/api/subscriptions/:id/disable', (req, res) => {
+  const subscription = setSubscriptionEnabled(req.params.id, false);
+  if (!subscription) return res.status(404).json({ error: 'subscription not found' });
+  res.json(subscription);
+});
+
+app.get('/api/subscriptions/:id/preview', (req, res) => {
+  const preview = subscriptionPreview(req.params.id);
+  if (!preview) return res.status(404).json({ error: 'subscription not found' });
+  res.json(preview);
+});
+
+app.get('/sub/:token', (req, res) => {
+  const subscription = resolvePublicSubscription(req.params.token);
+  if (!subscription || !subscription.enabled || isSubscriptionExpired(subscription)) {
+    return res.status(404).type('text/plain').send('subscription unavailable');
+  }
+
+  const requestedFormat = req.query.format ? String(req.query.format).toLowerCase() : subscription.default_format;
+  if (!['base64', 'uri'].includes(requestedFormat)) {
+    return res.status(400).type('text/plain').send('unsupported subscription format');
+  }
+
+  const { included } = buildSubscriptionNodes();
+  const content = subscriptionContent({ ...subscription, default_format: requestedFormat }, included);
+  res.set('Cache-Control', 'no-cache');
+  res.set('ETag', content.etag);
+  res.set('X-Subscription-Node-Count', String(included.length));
+  res.set('X-Subscription-Empty', included.length ? 'false' : 'true');
+  markSubscriptionAccess(subscription.id);
+  if (req.headers['if-none-match'] === content.etag) return res.status(304).end();
+  res.type('text/plain').send(content.body);
+});
+
 app.get('/api/servers/:id/logs', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
@@ -274,7 +391,8 @@ app.get('/vendor/xterm-fit.js', (req, res) => res.sendFile(xtermFitPath));
 app.use((err, req, res, next) => {
   const status = err.status || 500;
   const payload = { error: err.message || 'internal error' };
-  console.error(`[api-error] ${req.method} ${req.originalUrl} server=${req.params.id || '-'} ${err.message}`);
+  const loggedUrl = req.path.startsWith('/sub/') ? '/sub/[token]' : req.originalUrl;
+  console.error(`[api-error] ${req.method} ${loggedUrl} server=${req.params.id || '-'} ${err.message}`);
   if (err.message?.includes('All configured authentication methods failed')) {
     payload.error = 'SSH 认证失败：请检查用户名、密码或私钥';
   }

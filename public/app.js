@@ -2,6 +2,8 @@ const state = {
   servers: [],
   nodes: [],
   routes: [],
+  subscriptions: [],
+  subscriptionTokens: {},
   probes: {},
   statuses: {},
   autoRepairNotified: new Set(),
@@ -491,16 +493,18 @@ function setTheme() {
 
 async function loadAll() {
   try {
-    const [servers, nodes, stats, routes] = await Promise.all([
+    const [servers, nodes, stats, routes, subscriptions] = await Promise.all([
       api('/api/servers'),
       api('/api/nodes'),
       api('/api/stats'),
-      api('/api/routes')
+      api('/api/routes'),
+      api('/api/subscriptions')
     ]);
     state.servers = servers;
     state.nodes = nodes;
     state.stats = stats;
     state.routes = routes;
+    state.subscriptions = subscriptions;
     if (!state.selectedServerId && servers.length) {
       state.selectedServerId = servers[0].id;
     }
@@ -545,6 +549,7 @@ function renderAll({ motion = true } = {}) {
   renderServers({ motion });
   renderNodes({ motion });
   renderRoutes({ motion });
+  renderSubscriptions({ motion });
   refreshIcons();
 }
 
@@ -720,6 +725,393 @@ function renderNodes({ motion = true } = {}) {
     `;
   }).join('');
   if (motion) animateCollection(grid, '.node-card');
+}
+
+const SUBSCRIPTION_FORMAT_LABELS = { base64: 'Base64', uri: '原始 URI' };
+
+function subscriptionFormatLabel(format) {
+  return SUBSCRIPTION_FORMAT_LABELS[format] || 'Base64';
+}
+
+function subscriptionAddress(token, format = 'base64') {
+  if (!token) return '';
+  return `${location.origin}/sub/${encodeURIComponent(token)}${format === 'uri' ? '?format=uri' : ''}`;
+}
+
+function subscriptionExpiryLabel(value) {
+  if (!value) return '永不过期';
+  const expired = Date.parse(value) <= Date.now();
+  return `${expired ? '已过期 · ' : ''}${formatTime(value)}`;
+}
+
+function renderSubscriptions({ motion = true } = {}) {
+  const grid = $('#subscription-grid');
+  if (!grid) return;
+  if (!state.subscriptions.length) {
+    grid.innerHTML = emptyState('还没有订阅，创建后会自动包含所有启用的入口节点', {
+      icon: 'rss',
+      action: 'add-subscription',
+      actionLabel: '创建订阅'
+    });
+    if (motion) animateCollection(grid, '.empty-state');
+    return;
+  }
+  grid.innerHTML = state.subscriptions.map((subscription) => {
+    const token = state.subscriptionTokens[subscription.id] || '';
+    const address = subscriptionAddress(token);
+    const enabled = Boolean(subscription.enabled);
+    return `
+      <article class="subscription-card">
+        <div class="subscription-card-head">
+          <div>
+            <h3 title="${escapeHtml(subscription.name)}">${escapeHtml(subscription.name)}</h3>
+            <span class="hint">自动同步入口节点</span>
+          </div>
+          <div class="card-head-badges">
+            ${badge(subscriptionFormatLabel(subscription.default_format), 'indigo')}
+            ${enabled ? badge('已启用', 'green') : badge('已禁用')}
+          </div>
+        </div>
+        <div class="subscription-body">
+          <div class="kv-grid">
+            <div class="kv">
+              <span class="kv-label">当前节点</span>
+              <span class="kv-value">${escapeHtml(subscription.node_count ?? 0)} 个入口</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">默认格式</span>
+              <span class="kv-value">${escapeHtml(subscriptionFormatLabel(subscription.default_format))}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">过期时间</span>
+              <span class="kv-value">${escapeHtml(subscriptionExpiryLabel(subscription.expires_at))}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">访问次数</span>
+              <span class="kv-value">${escapeHtml(subscription.access_count || 0)}</span>
+            </div>
+          </div>
+          <div class="subscription-meta-row">
+            <span>最近访问 ${escapeHtml(formatTime(subscription.last_access_at))}</span>
+            <span>创建于 ${escapeHtml(formatTime(subscription.created_at))}</span>
+          </div>
+          <div class="subscription-address-preview ${address ? '' : 'missing'}">
+            <i data-lucide="link"></i>
+            <span>${address ? escapeHtml(address) : '完整地址仅在创建或重新生成 Token 后显示'}</span>
+          </div>
+        </div>
+        <div class="card-actions subscription-actions">
+          <button class="btn sm" data-sub-action="details" data-id="${escapeHtml(subscription.id)}" title="查看订阅详情"><i data-lucide="eye"></i>详情</button>
+          <button class="btn sm" data-sub-action="edit" data-id="${escapeHtml(subscription.id)}" title="编辑订阅设置"><i data-lucide="pencil"></i>编辑</button>
+          <button class="btn sm" data-sub-action="copy" data-id="${escapeHtml(subscription.id)}" title="复制 Base64 订阅地址" ${address ? '' : 'disabled'}><i data-lucide="copy"></i>复制地址</button>
+          <button class="btn sm" data-sub-action="toggle" data-id="${escapeHtml(subscription.id)}" title="${enabled ? '禁用订阅' : '启用订阅'}"><i data-lucide="${enabled ? 'pause' : 'play'}"></i>${enabled ? '禁用' : '启用'}</button>
+          <button class="btn sm danger" data-sub-action="rotate" data-id="${escapeHtml(subscription.id)}" title="重新生成 Token，旧地址立即失效"><i data-lucide="key-round"></i>重生成</button>
+          <button class="icon-btn" data-sub-action="delete" data-id="${escapeHtml(subscription.id)}" title="删除订阅，地址立即失效" aria-label="删除订阅"><i data-lucide="trash-2"></i></button>
+        </div>
+      </article>
+    `;
+  }).join('');
+  if (motion) animateCollection(grid, '.subscription-card');
+}
+
+function formatDateTimeLocal(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (number) => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function openSubscriptionForm(subscription = null) {
+  const isEdit = Boolean(subscription);
+  setModal(`
+    <div class="modal-backdrop">
+      <div class="modal subscription-form-modal">
+        <div class="modal-head">
+          <h2>${isEdit ? '编辑订阅' : '创建订阅'}</h2>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <form id="subscription-form" class="modal-body">
+          <div class="form-section">
+            <div class="form-section-title">订阅设置</div>
+            <div class="form-grid">
+              <div class="field full">
+                <label for="subscription-name">订阅名称</label>
+                <input id="subscription-name" name="name" required maxlength="80" value="${escapeHtml(subscription?.name || '')}" placeholder="例如：我的入口订阅">
+              </div>
+              <div class="field">
+                <label for="subscription-format">默认格式</label>
+                <select id="subscription-format" name="default_format">
+                  <option value="base64" ${subscription?.default_format !== 'uri' ? 'selected' : ''}>Base64</option>
+                  <option value="uri" ${subscription?.default_format === 'uri' ? 'selected' : ''}>原始 URI</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="subscription-expires">过期时间</label>
+                <input id="subscription-expires" name="expires_at" type="datetime-local" value="${escapeHtml(formatDateTimeLocal(subscription?.expires_at))}">
+                <span class="hint">留空表示永不过期</span>
+              </div>
+              <div class="field full">
+                <label class="checkbox-field">
+                  <input type="checkbox" name="enabled" ${subscription?.enabled !== false ? 'checked' : ''}>
+                  <span>创建后立即启用订阅</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="subscription-form-note">
+            <i data-lucide="info"></i>
+            <span>订阅将自动包含所有已启用的入口节点，不需要手动选择节点。</span>
+          </div>
+        </form>
+        <div class="modal-foot">
+          <button class="btn ghost" data-close>取消</button>
+          <button class="btn primary" id="save-subscription-btn" title="保存订阅设置"><i data-lucide="save"></i>${isEdit ? '保存' : '创建并生成地址'}</button>
+        </div>
+      </div>
+    </div>
+  `);
+  $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
+  $('#save-subscription-btn').addEventListener('click', async (event) => {
+    event.preventDefault();
+    const form = $('#subscription-form');
+    if (!form.reportValidity()) return;
+    const data = Object.fromEntries(new FormData(form).entries());
+    data.enabled = form.querySelector('[name="enabled"]').checked;
+    await withBusy(event.currentTarget, isEdit ? '保存中...' : '创建中...', async () => {
+      try {
+        const result = await api(isEdit ? `/api/subscriptions/${subscription.id}` : '/api/subscriptions', {
+          method: isEdit ? 'PUT' : 'POST',
+          body: JSON.stringify(data)
+        });
+        if (result.token && result.subscription?.id) state.subscriptionTokens[result.subscription.id] = result.token;
+        toast(isEdit ? '订阅设置已保存' : '订阅已创建，地址已生成', 'success');
+        closeModal();
+        await loadAll();
+        if (!isEdit && result.subscription?.id) openSubscriptionDetails(result.subscription.id);
+      } catch (error) {
+        toast(error.message, 'error');
+      }
+    });
+  });
+}
+
+function subscriptionAddressRow(subscriptionId, format, label) {
+  const token = state.subscriptionTokens[subscriptionId] || '';
+  const address = subscriptionAddress(token, format);
+  return `
+    <div class="subscription-address-row">
+      <div class="subscription-address-label">${escapeHtml(label)}</div>
+      <input readonly value="${escapeHtml(address || '创建或重新生成 Token 后显示')}" aria-label="${escapeHtml(label)}">
+      <button class="btn sm ghost" data-sub-copy="${escapeHtml(subscriptionId)}" data-format="${format}" title="复制${escapeHtml(label)}" ${address ? '' : 'disabled'}><i data-lucide="copy"></i>复制</button>
+      <button class="icon-btn" data-sub-download="${escapeHtml(subscriptionId)}" data-format="${format}" title="下载${escapeHtml(label)}" aria-label="下载${escapeHtml(label)}" ${address ? '' : 'disabled'}><i data-lucide="download"></i></button>
+    </div>
+  `;
+}
+
+function renderSubscriptionDetails(preview) {
+  const subscription = preview.subscription;
+  const token = state.subscriptionTokens[subscription.id] || '';
+  const status = subscription.enabled ? badge('已启用', 'green') : badge('已禁用');
+  const nodeRows = preview.nodes.length
+    ? preview.nodes.map((node) => `
+        <div class="subscription-node-row">
+          <div class="subscription-node-main">
+            <strong>${escapeHtml(node.name)}</strong>
+            <span class="hint">${escapeHtml(node.server_name || node.server_host)} · ${escapeHtml(node.network.toUpperCase())}</span>
+          </div>
+          <span>${escapeHtml(protocolLabel(node.protocol))}</span>
+          <span>${escapeHtml(node.server_host)}:${escapeHtml(node.port)}</span>
+          <span>${escapeHtml(node.security || 'none')}</span>
+          ${badge('已包含', 'green')}
+        </div>
+      `).join('')
+    : emptyState('当前没有可生成分享链接的入口节点', { icon: 'network' });
+  const excludedRows = preview.excluded.length
+    ? `
+      <details class="subscription-excluded">
+        <summary>查看被排除节点（${preview.excluded.length}）</summary>
+        <div class="subscription-excluded-list">
+          ${preview.excluded.map((node) => `<div><span>${escapeHtml(node.name)}</span><span>${escapeHtml(node.reason)}</span></div>`).join('')}
+        </div>
+      </details>
+    `
+    : '';
+  setModal(`
+    <div class="modal-backdrop">
+      <div class="modal wide subscription-detail-modal">
+        <div class="modal-head">
+          <div>
+            <h2>${escapeHtml(subscription.name)}</h2>
+            <span class="hint">订阅详情 · ${escapeHtml(subscription.node_count)} 个入口节点</span>
+          </div>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="status-summary subscription-summary">
+            <div class="status-summary-item"><span class="status-summary-label">状态</span><span class="status-summary-value">${status}</span></div>
+            <div class="status-summary-item"><span class="status-summary-label">当前入口节点</span><span class="status-summary-value">${escapeHtml(preview.node_count)} 个</span></div>
+            <div class="status-summary-item"><span class="status-summary-label">过期时间</span><span class="status-summary-value">${escapeHtml(subscriptionExpiryLabel(subscription.expires_at))}</span></div>
+            <div class="status-summary-item"><span class="status-summary-label">最近访问</span><span class="status-summary-value">${escapeHtml(formatTime(subscription.last_access_at))}</span></div>
+          </div>
+          <div class="subscription-addresses">
+            <div class="status-section-head"><span>订阅地址</span><span>${token ? '当前页面临时保留 Token' : '明文 Token 不会从数据库恢复'}</span></div>
+            ${subscriptionAddressRow(subscription.id, 'base64', '通用 Base64 地址')}
+            ${subscriptionAddressRow(subscription.id, 'uri', '原始 URI 地址')}
+          </div>
+          <div class="status-section-head"><span>节点预览</span><span>${escapeHtml(preview.link_count)} 条分享链接</span></div>
+          <div class="subscription-node-list">${nodeRows}</div>
+          ${excludedRows}
+        </div>
+        <div class="modal-foot">
+          <button class="btn ghost" data-close>关闭</button>
+          <button class="btn ghost" data-sub-detail-edit="${escapeHtml(subscription.id)}" title="编辑订阅设置"><i data-lucide="pencil"></i>编辑</button>
+          <button class="btn danger" data-sub-detail-rotate="${escapeHtml(subscription.id)}" title="重新生成 Token，旧地址立即失效"><i data-lucide="key-round"></i>重新生成 Token</button>
+        </div>
+      </div>
+    </div>
+  `);
+  $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
+  $$('#modal-root [data-sub-copy]').forEach((button) => button.addEventListener('click', () => copySubscriptionAddress(button.dataset.subCopy, button.dataset.format)));
+  $$('#modal-root [data-sub-download]').forEach((button) => button.addEventListener('click', () => downloadSubscription(button.dataset.subDownload, button.dataset.format)));
+  $('#modal-root [data-sub-detail-edit]')?.addEventListener('click', () => {
+    const item = state.subscriptions.find((entry) => entry.id === subscription.id);
+    if (item) openSubscriptionForm(item);
+  });
+  $('#modal-root [data-sub-detail-rotate]')?.addEventListener('click', () => confirmRotateSubscription(subscription.id));
+}
+
+async function openSubscriptionDetails(subscriptionId) {
+  setModal(`
+    <div class="modal-backdrop">
+      <div class="modal subscription-detail-modal">
+        <div class="modal-head"><h2>订阅详情</h2></div>
+        <div class="modal-body"><div class="status-loading">正在加载订阅详情...</div></div>
+      </div>
+    </div>
+  `);
+  try {
+    renderSubscriptionDetails(await api(`/api/subscriptions/${subscriptionId}/preview`));
+  } catch (error) {
+    closeModal();
+    toast(error.message, 'error');
+  }
+}
+
+async function copySubscriptionAddress(subscriptionId, format = 'base64') {
+  const address = subscriptionAddress(state.subscriptionTokens[subscriptionId], format);
+  if (!address) {
+    toast('当前页面没有可复制的明文 Token，请先重新生成 Token', 'info');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(address);
+    toast('订阅地址已复制', 'success');
+  } catch {
+    toast('复制失败，请手动选择地址', 'error');
+  }
+}
+
+async function downloadSubscription(subscriptionId, format = 'base64') {
+  const token = state.subscriptionTokens[subscriptionId];
+  if (!token) {
+    toast('当前页面没有可下载的明文 Token，请先重新生成 Token', 'info');
+    return;
+  }
+  try {
+    const response = await fetch(`/sub/${encodeURIComponent(token)}?format=${encodeURIComponent(format)}`);
+    if (!response.ok) throw new Error('订阅当前不可用');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `subscription-${format}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast('订阅内容已下载', 'success');
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function runSubscriptionToggle(subscriptionId, button) {
+  const subscription = state.subscriptions.find((item) => item.id === subscriptionId);
+  if (!subscription) return;
+  const action = subscription.enabled ? 'disable' : 'enable';
+  await withBusy(button, subscription.enabled ? '禁用中...' : '启用中...', async () => {
+    try {
+      await api(`/api/subscriptions/${subscriptionId}/${action}`, { method: 'POST' });
+      toast(subscription.enabled ? '订阅已禁用' : '订阅已启用', 'success');
+      await loadAll();
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  });
+}
+
+function confirmRotateSubscription(subscriptionId) {
+  const subscription = state.subscriptions.find((item) => item.id === subscriptionId);
+  if (!subscription) return;
+  openConfirmModal({
+    title: '重新生成订阅 Token',
+    message: [
+      `将为「${subscription.name}」生成新的订阅地址。`,
+      '旧订阅地址会立即失效，已经导入客户端的旧地址需要重新替换。'
+    ],
+    confirmText: '重新生成',
+    onConfirm: () => runRotateSubscription(subscriptionId)
+  });
+}
+
+async function runRotateSubscription(subscriptionId) {
+  openProgressModal('重新生成 Token', '正在生成新的订阅地址...');
+  try {
+    const result = await api(`/api/subscriptions/${subscriptionId}/rotate`, { method: 'POST' });
+    state.subscriptionTokens[subscriptionId] = result.token;
+    closeProgressModal();
+    toast('Token 已重新生成，旧地址已失效', 'success');
+    await loadAll();
+    openSubscriptionDetails(subscriptionId);
+  } catch (error) {
+    closeProgressModal();
+    toast(error.message, 'error');
+  }
+}
+
+function confirmDeleteSubscription(subscriptionId, button = null) {
+  const subscription = state.subscriptions.find((item) => item.id === subscriptionId);
+  if (!subscription) return;
+  openConfirmModal({
+    title: '删除订阅',
+    message: [
+      `将删除订阅「${subscription.name}」。`,
+      '删除后订阅地址立即失效，节点本身不会被删除。'
+    ],
+    confirmText: '删除订阅',
+    onConfirm: async () => {
+      await withBusy(button, '删除中...', async () => {
+        try {
+          await api(`/api/subscriptions/${subscriptionId}`, { method: 'DELETE' });
+          delete state.subscriptionTokens[subscriptionId];
+          toast('订阅已删除', 'success');
+          await loadAll();
+        } catch (error) {
+          toast(error.message, 'error');
+        }
+      });
+    }
+  });
+}
+
+function runSubscriptionAction(action, subscriptionId, button) {
+  const subscription = state.subscriptions.find((item) => item.id === subscriptionId);
+  if (!subscription) return;
+  if (action === 'details') openSubscriptionDetails(subscriptionId);
+  if (action === 'edit') openSubscriptionForm(subscription);
+  if (action === 'copy') copySubscriptionAddress(subscriptionId);
+  if (action === 'toggle') runSubscriptionToggle(subscriptionId, button);
+  if (action === 'rotate') confirmRotateSubscription(subscriptionId);
+  if (action === 'delete') confirmDeleteSubscription(subscriptionId, button);
 }
 
 function openServerModal(server = null) {
@@ -1967,6 +2359,7 @@ function openConfirmModal({ title, message = [], confirmText = '确认', danger 
 function handleEmptyAction(action) {
   if (action === 'add-server') openServerModal();
   if (action === 'add-node') openNodeModal(state.selectedServerId);
+  if (action === 'add-subscription') openSubscriptionForm();
   if (action === 'go-servers') $$('.nav-item[data-view="servers"]')[0]?.click();
   if (action === 'go-nodes') $$('.nav-item[data-view="nodes"]')[0]?.click();
 }
@@ -2101,7 +2494,13 @@ function wireEvents() {
     item.addEventListener('click', () => {
       $$('.nav-item').forEach((nav) => nav.classList.toggle('active', nav === item));
       $$('.view').forEach((view) => view.classList.toggle('active', view.id === `view-${item.dataset.view}`));
-      const titles = { overview: ['总览', 'SSH 远程节点管理'], servers: ['服务器', 'SSH 连接与远程部署'], nodes: ['节点', 'Xray 入站配置'], routes: ['路由', '入站与出站链路'] };
+      const titles = {
+        overview: ['总览', 'SSH 远程节点管理'],
+        servers: ['服务器', 'SSH 连接与远程部署'],
+        nodes: ['节点', 'Xray 入站配置'],
+        routes: ['路由', '入站与出站链路'],
+        subscriptions: ['订阅', '自动同步启用的入口节点']
+      };
       const [title, subtitle] = titles[item.dataset.view];
       setPage(title, subtitle);
     });
@@ -2144,6 +2543,7 @@ function wireEvents() {
     });
   }
   $('#add-node-btn').addEventListener('click', () => openNodeModal(state.selectedServerId));
+  $('#add-subscription-btn').addEventListener('click', () => openSubscriptionForm());
   $('#overview-go-nodes').addEventListener('click', () => {
     $$('.nav-item[data-view="nodes"]')[0].click();
   });
@@ -2181,6 +2581,12 @@ function wireEvents() {
     const button = event.target.closest('button[data-action]');
     if (!button) return;
     runNodeAction(button.dataset.action, button.dataset.id, button);
+  });
+
+  $('#subscription-grid').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-sub-action]');
+    if (!button) return;
+    runSubscriptionAction(button.dataset.subAction, button.dataset.id, button);
   });
 
   $('#route-inbound-list').addEventListener('click', (event) => {

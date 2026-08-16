@@ -4,9 +4,14 @@ import { join } from 'node:path';
 import { dataDir } from './paths.js';
 import { decryptText, encryptText, newId } from './crypto.js';
 import { canUseReality } from './xray.js';
+import { createSubscriptionToken, hashSubscriptionToken, subscriptionTokenPrefix } from './subscription-token.js';
 
 mkdirSync(dataDir, { recursive: true });
 const db = new DatabaseSync(join(dataDir, 'panel.db'));
+
+export function closeDatabase() {
+  db.close();
+}
 
 db.exec(`
 PRAGMA journal_mode = WAL;
@@ -96,6 +101,22 @@ CREATE TABLE IF NOT EXISTS repair_logs (
 
 CREATE INDEX IF NOT EXISTS idx_repair_logs_server ON repair_logs(server_id);
 CREATE INDEX IF NOT EXISTS idx_repair_logs_created ON repair_logs(created_at);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  token_prefix TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  default_format TEXT NOT NULL DEFAULT 'base64',
+  expires_at TEXT,
+  last_access_at TEXT,
+  access_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_updated ON subscriptions(updated_at);
 `);
 
 const nodeColumns = db.prepare('PRAGMA table_info(nodes)').all();
@@ -384,6 +405,127 @@ export function deleteNode(id) {
     db.exec('ROLLBACK');
     throw error;
   }
+}
+
+function publicSubscription(row, nodeCount = null) {
+  if (!row) return null;
+  const { token_hash, ...safe } = row;
+  const result = {
+    ...safe,
+    enabled: Boolean(row.enabled),
+    access_count: Number(row.access_count || 0)
+  };
+  if (nodeCount !== null) result.node_count = Number(nodeCount || 0);
+  return result;
+}
+
+function subscriptionNodeCount() {
+  return db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM nodes
+    WHERE role = 'inbound' AND enabled = 1
+  `).get().count;
+}
+
+function normalizeSubscriptionInput(input = {}) {
+  const name = String(input.name || '').trim();
+  const defaultFormat = input.default_format === 'uri' ? 'uri' : 'base64';
+  const expiresAt = input.expires_at ? String(input.expires_at).trim() : null;
+  if (!name) {
+    const error = new Error('subscription name is required');
+    error.status = 400;
+    throw error;
+  }
+  if (expiresAt && !Number.isFinite(Date.parse(expiresAt))) {
+    const error = new Error('expires_at must be a valid date');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    name,
+    enabled: input.enabled === false || input.enabled === 0 ? 0 : 1,
+    default_format: defaultFormat,
+    expires_at: expiresAt
+  };
+}
+
+export function listSubscriptions() {
+  const count = subscriptionNodeCount();
+  return db.prepare('SELECT * FROM subscriptions ORDER BY created_at DESC').all()
+    .map((row) => publicSubscription(row, count));
+}
+
+export function getSubscription(id) {
+  const row = db.prepare('SELECT * FROM subscriptions WHERE id = ?').get(id) || null;
+  return publicSubscription(row, subscriptionNodeCount());
+}
+
+export function getSubscriptionRecord(id) {
+  return db.prepare('SELECT * FROM subscriptions WHERE id = ?').get(id) || null;
+}
+
+export function getSubscriptionByTokenHash(tokenHash) {
+  return db.prepare('SELECT * FROM subscriptions WHERE token_hash = ?').get(tokenHash) || null;
+}
+
+export function createSubscription(input = {}) {
+  const data = normalizeSubscriptionInput(input);
+  const id = newId();
+  const token = createSubscriptionToken();
+  const timestamp = now();
+  db.prepare(`
+    INSERT INTO subscriptions
+      (id, name, token_hash, token_prefix, enabled, default_format, expires_at,
+       last_access_at, access_count, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, data.name, hashSubscriptionToken(token), subscriptionTokenPrefix(token),
+    data.enabled, data.default_format, data.expires_at, null, 0, timestamp, timestamp);
+  return { subscription: getSubscription(id), token };
+}
+
+export function updateSubscription(id, input = {}) {
+  const existing = getSubscriptionRecord(id);
+  if (!existing) return null;
+  const data = normalizeSubscriptionInput(input);
+  db.prepare(`
+    UPDATE subscriptions SET
+      name = ?, enabled = ?, default_format = ?, expires_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(data.name, data.enabled, data.default_format, data.expires_at, now(), id);
+  return getSubscription(id);
+}
+
+export function rotateSubscription(id) {
+  const existing = getSubscriptionRecord(id);
+  if (!existing) return null;
+  const token = createSubscriptionToken();
+  db.prepare(`
+    UPDATE subscriptions SET token_hash = ?, token_prefix = ?, updated_at = ?
+    WHERE id = ?
+  `).run(hashSubscriptionToken(token), subscriptionTokenPrefix(token), now(), id);
+  return { subscription: getSubscription(id), token };
+}
+
+export function setSubscriptionEnabled(id, enabled) {
+  const existing = getSubscriptionRecord(id);
+  if (!existing) return null;
+  db.prepare('UPDATE subscriptions SET enabled = ?, updated_at = ? WHERE id = ?')
+    .run(enabled ? 1 : 0, now(), id);
+  return getSubscription(id);
+}
+
+export function deleteSubscription(id) {
+  return db.prepare('DELETE FROM subscriptions WHERE id = ?').run(id).changes > 0;
+}
+
+export function touchSubscriptionAccess(id) {
+  const timestamp = now();
+  db.prepare(`
+    UPDATE subscriptions
+    SET last_access_at = ?, access_count = access_count + 1
+    WHERE id = ?
+  `).run(timestamp, id);
+  return getSubscriptionRecord(id);
 }
 
 export function getStats() {
