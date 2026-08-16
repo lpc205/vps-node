@@ -9,7 +9,11 @@
 - 开源协作基础设施：贡献指南、Issue/PR 模板、CI。
 - 节点表单按协议动态显隐字段，参考 3x-ui 对齐各协议配置。
 - Shadowsocks 支持选择加密方式和 TCP/UDP 网络；VMess 客户端支持选择加密方式。
-- Reality 仅对 VLESS / Trojan 开放，VMess 与 WS 组合不可用。
+- Reality 仅对 VLESS 开放，VMess 与 WS 组合不可用。
+
+### Fixed
+
+- Trojan 节点不再允许选择 Reality：此前 Trojan 分享链接缺少 Reality 参数，导入客户端不完整。
 
 ## [0.1.0] - 2026-08-16
 

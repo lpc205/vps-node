@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir } from './paths.js';
 import { decryptText, encryptText, newId } from './crypto.js';
+import { canUseReality } from './xray.js';
 
 mkdirSync(dataDir, { recursive: true });
 const db = new DatabaseSync(join(dataDir, 'panel.db'));
@@ -302,9 +303,8 @@ export function saveNode(input, id = null) {
     error.status = 400;
     throw error;
   }
-  const realityEligible = (protocol === 'vless' || protocol === 'trojan') && network !== 'ws';
-  if (security === 'reality' && !realityEligible) {
-    const error = new Error('reality is only supported for vless/trojan on tcp, grpc or httpupgrade');
+  if (security === 'reality' && !canUseReality(protocol, network)) {
+    const error = new Error('reality is only supported for vless on tcp, grpc or httpupgrade');
     error.status = 400;
     throw error;
   }

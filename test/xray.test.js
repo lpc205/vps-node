@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildXrayConfig, generateRealityKeypair, nodeLinks } from '../src/xray.js';
+import { canUseReality } from '../src/xray.js';
 import { buildNodeStatuses, classifySshError, parseStatusOutput } from '../src/remote.js';
 
 test('buildXrayConfig emits supported inbound protocols', () => {
@@ -383,4 +384,13 @@ test('classifySshError distinguishes auth and timeout failures', () => {
   assert.match(classifySshError(new Error('All configured authentication methods failed')), /认证失败/);
   assert.match(classifySshError(new Error('SSH command timed out after 20000ms')), /超时/);
   assert.match(classifySshError(new Error('connect ECONNREFUSED 1.2.3.4:22')), /拒绝/);
+});
+
+test('reality is restricted to vless on non-ws transports', () => {
+  assert.equal(canUseReality('vless', 'tcp'), true);
+  assert.equal(canUseReality('vless', 'grpc'), true);
+  assert.equal(canUseReality('vless', 'ws'), false);
+  assert.equal(canUseReality('trojan', 'tcp'), false);
+  assert.equal(canUseReality('trojan', 'grpc'), false);
+  assert.equal(canUseReality('vmess', 'tcp'), false);
 });

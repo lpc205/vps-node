@@ -814,7 +814,7 @@ function openNodeModal(serverId, node = null) {
     $$('.ss-field').forEach((field) => field.style.display = isSs ? '' : 'none');
 
     const realityOption = $('select[name="security"] option[value="reality"]');
-    const canReality = (protocol === 'vless' || protocol === 'trojan') && network !== 'ws';
+    const canReality = protocol === 'vless' && network !== 'ws';
     if (realityOption) realityOption.disabled = !canReality;
     if (security === 'reality' && !canReality) {
       $('select[name="security"]').value = 'none';

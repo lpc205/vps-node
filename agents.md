@@ -268,7 +268,7 @@ docker compose up -d --build
 - 部署使用 base64 传输 `config.json`，避免 SSH 脚本转义问题。
 - 路由配置在 `buildXrayConfig` 中按 `routes` 生成 `outbound` 与 routing rule；同一入站只能有一条 route。
 - 节点表单按协议动态显隐字段：Shadowsocks 不显示传输/安全/SNI/路径，改用 `method` 与 `ss_network`；VMess 客户端有 `security`；VLESS 只在 Reality 时显示 flow。
-- Reality 仅对 VLESS / Trojan 且传输不为 WS 可用；VMess 与 WS 组合会被表单禁用并在后端拒绝。
+- Reality 仅对 VLESS 且传输不为 WS 可用；Trojan、VMess 与 WS 组合会被表单禁用并在后端拒绝。
 
 ## 安全与边界
 ## GitHub 同步

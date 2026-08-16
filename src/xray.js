@@ -7,6 +7,10 @@ function splitList(value) {
     .filter(Boolean);
 }
 
+export function canUseReality(protocol, network) {
+  return protocol === 'vless' && network !== 'ws';
+}
+
 function buildStreamSettings(node) {
   const stream = {
     network: node.network,
