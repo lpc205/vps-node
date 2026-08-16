@@ -733,6 +733,49 @@ textarea {
   text-align: center;
 }
 
+.empty-state svg {
+  width: 30px;
+  height: 30px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.empty-state p {
+  margin: 0 0 10px;
+}
+
+.empty-state .btn {
+  margin-top: 2px;
+}
+
+.status-checked {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fafb;
+  color: var(--muted);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.status-checked .hint {
+  margin-left: auto;
+}
+
+.confirm-message {
+  display: grid;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.confirm-message p {
+  margin: 0;
+  line-height: 1.6;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1088,6 +1131,9 @@ textarea {
 }
 
 .toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 14px;
   border: 1px solid var(--line-strong);
   border-left: 4px solid var(--teal);
@@ -1100,6 +1146,28 @@ textarea {
 
 .toast.error {
   border-left-color: var(--red);
+}
+
+.toast svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.toast.success {
+  border-left-color: var(--green);
+}
+
+.toast.success svg {
+  color: var(--green);
+}
+
+.toast.error svg {
+  color: var(--red);
+}
+
+.toast.info svg {
+  color: var(--teal);
 }
 
 @media (max-width: 860px) {

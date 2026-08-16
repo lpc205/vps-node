@@ -132,10 +132,27 @@ async function api(path, options = {}) {
 
 function toast(message, type = 'info') {
   const item = document.createElement('div');
-  item.className = `toast ${type === 'error' ? 'error' : ''}`;
-  item.textContent = message;
+  item.className = `toast ${type}`;
+  const icon = { success: 'check-circle-2', error: 'circle-alert', info: 'info' }[type] || 'info';
+  item.innerHTML = `<i data-lucide="${icon}"></i><span></span>`;
+  item.querySelector('span').textContent = message;
   $('#toast-root').appendChild(item);
+  refreshIcons();
   setTimeout(() => item.remove(), 4200);
+}
+
+async function withBusy(button, busyText, fn) {
+  if (!button) return fn();
+  const original = button.innerHTML;
+  button.disabled = true;
+  button.textContent = busyText;
+  try {
+    return await fn();
+  } finally {
+    button.disabled = false;
+    button.innerHTML = original;
+    refreshIcons();
+  }
 }
 
 function setPage(title, subtitle) {
@@ -166,8 +183,17 @@ function closeTerminalSession() {
   terminalSession = null;
 }
 
-function emptyState(text) {
-  return `<div class="empty-state">${escapeHtml(text)}</div>`;
+function emptyState(text, options = {}) {
+  const icon = options.icon || 'inbox';
+  const action = options.action || '';
+  const actionLabel = options.actionLabel || '';
+  return `
+    <div class="empty-state">
+      <i data-lucide="${icon}"></i>
+      <p>${escapeHtml(text)}</p>
+      ${action ? `<button type="button" class="btn primary sm" data-empty-action="${escapeHtml(action)}">${escapeHtml(actionLabel)}</button>` : ''}
+    </div>
+  `;
 }
 
 function badge(text, tone = '', title = '') {
@@ -229,6 +255,22 @@ const REPAIR_SUMMARIES = {
   config_mismatch: '用面板期望配置覆盖 config.json，然后重启 Xray',
   binary_missing: '重新下载并安装 Xray 二进制，写入配置后重启'
 };
+
+const REPAIR_ACTION_LABELS = {
+  service_stopped: '恢复服务',
+  config_missing: '恢复配置',
+  config_mismatch: '恢复配置',
+  binary_missing: '重新部署'
+};
+
+function repairActionLabel(driftType) {
+  return REPAIR_ACTION_LABELS[driftType] || '一键修复';
+}
+
+function cachedStatusTitle(live) {
+  const time = formatTime(live?.status?.last_checked_at);
+  return `缓存 · ${time}`;
+}
 
 function isAutoRepairEnabled() {
   return localStorage.getItem('auto_repair_enabled') === '1';
@@ -304,27 +346,27 @@ function renderOverview() {
         const live = server ? state.statuses[server.id] : null;
         return `
           <div class="overview-row" data-node-id="${escapeHtml(node.id)}">
-            <span class="name">${statusDot(live?.state || 'unknown', live?.status?.last_error || '')}${escapeHtml(node.name)}</span>
+            <span class="name">${statusDot(live?.state || 'unknown', cachedStatusTitle(live))}${escapeHtml(node.name)}</span>
             <span class="muted">${escapeHtml(server ? `${server.name} · ${server.host}` : '未知服务器')}</span>
             <span class="muted">${escapeHtml(protocolLabel(node.protocol))} / ${escapeHtml(node.port)}</span>
             ${node.enabled === 1 ? badge('启用', 'green') : badge('停用')}
           </div>
         `;
       }).join('')
-    : emptyState('还没有节点，先添加服务器和节点');
+    : emptyState('还没有节点，先添加服务器和节点', { icon: 'network', action: 'go-servers', actionLabel: '添加服务器' });
 }
 
 function renderServers() {
   const grid = $('#server-grid');
   if (!state.servers.length) {
-    grid.innerHTML = emptyState('还没有服务器，点击右上角添加');
+    grid.innerHTML = emptyState('还没有服务器，点击“添加服务器”', { icon: 'server', action: 'add-server', actionLabel: '添加服务器' });
     return;
   }
   grid.innerHTML = state.servers.map((server) => {
     const probe = state.probes[server.id];
     const nodeCount = state.nodes.filter((node) => node.server_id === server.id).length;
     const live = state.statuses[server.id];
-    const statusBadge = live ? statusPill(live.state, live.status?.last_error || '') : statusPill('unknown');
+    const statusBadge = live ? statusPill(live.state, cachedStatusTitle(live)) : statusPill('unknown');
     const drift = live?.drift || null;
     const authLabel = server.auth_type === 'key' ? 'SSH Key' : '密码';
     return `
@@ -353,14 +395,15 @@ function renderServers() {
             </div>
           </div>
           ${server.notes ? `<div class="hint">${escapeHtml(server.notes)}</div>` : ''}
+          ${live?.status?.last_checked_at ? `<div class="status-checked"><span>最近检查</span><span>${escapeHtml(formatTime(live.status.last_checked_at))}</span><span class="hint">缓存</span></div>` : ''}
           ${drift ? `<div class="drift-banner"><span class="badge red">已漂移</span><span>${escapeHtml(live.drift_reason || '')}</span></div>` : ''}
         </div>
         <div class="card-actions">
-          ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(server.id)}" data-drift="${escapeHtml(drift)}"><i data-lucide="wrench"></i>一键修复</button>` : ''}
-          <button class="btn sm" data-action="status" data-id="${escapeHtml(server.id)}"><i data-lucide="activity"></i>状态</button>
-          <button class="btn sm" data-action="terminal" data-id="${escapeHtml(server.id)}"><i data-lucide="terminal"></i>终端</button>
-          <button class="btn sm" data-action="logs" data-id="${escapeHtml(server.id)}"><i data-lucide="scroll-text"></i>日志</button>
-          <button class="btn sm ghost" data-action="edit" data-id="${escapeHtml(server.id)}"><i data-lucide="pencil"></i>编辑</button>
+          ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(server.id)}" data-drift="${escapeHtml(drift)}" title="${escapeHtml(repairActionLabel(drift))}"><i data-lucide="wrench"></i>${escapeHtml(repairActionLabel(drift))}</button>` : ''}
+          <button class="btn sm" data-action="status" data-id="${escapeHtml(server.id)}" title="实时检查 SSH、Xray 与配置状态"><i data-lucide="activity"></i>状态</button>
+          <button class="btn sm" data-action="terminal" data-id="${escapeHtml(server.id)}" title="打开 SSH 终端"><i data-lucide="terminal"></i>终端</button>
+          <button class="btn sm" data-action="logs" data-id="${escapeHtml(server.id)}" title="查看 Xray 日志"><i data-lucide="scroll-text"></i>日志</button>
+          <button class="btn sm ghost" data-action="edit" data-id="${escapeHtml(server.id)}" title="编辑服务器配置"><i data-lucide="pencil"></i>编辑</button>
           <button class="icon-btn" data-action="delete" data-id="${escapeHtml(server.id)}" title="删除" aria-label="删除"><i data-lucide="trash-2"></i></button>
         </div>
       </div>
@@ -384,11 +427,13 @@ function renderNodes() {
   const grid = $('#node-grid');
   const nodes = state.nodes.filter((node) => node.server_id === state.selectedServerId);
   if (!state.selectedServerId) {
-    grid.innerHTML = emptyState('请先添加并选择服务器');
+    grid.innerHTML = state.servers.length
+      ? emptyState('请先选择目标服务器', { icon: 'server' })
+      : emptyState('请先添加服务器，再创建节点', { icon: 'server', action: 'go-servers', actionLabel: '添加服务器' });
     return;
   }
   if (!nodes.length) {
-    grid.innerHTML = emptyState('该服务器还没有节点，点击添加节点');
+    grid.innerHTML = emptyState('该服务器还没有节点，点击“添加节点”', { icon: 'network', action: 'add-node', actionLabel: '添加节点' });
     return;
   }
   grid.innerHTML = nodes.map((node) => {
@@ -415,7 +460,7 @@ function renderNodes() {
         <div class="node-card-head">
           <h3 title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</h3>
           <div class="card-head-badges">
-            ${statusPill(nodeLiveState(state.statuses[node.server_id], node))}
+            ${statusPill(nodeLiveState(state.statuses[node.server_id], node), cachedStatusTitle(live))}
             ${node.role === 'outbound' ? badge('出站', 'amber') : badge('入站')}
             ${node.enabled === 1 ? badge('启用', 'green') : badge('停用')}
           </div>
@@ -436,14 +481,15 @@ function renderNodes() {
             </div>
             ${protocolRows}
           </div>
+          ${live?.status?.last_checked_at ? `<div class="status-checked"><span>最近检查</span><span>${escapeHtml(formatTime(live.status.last_checked_at))}</span><span class="hint">缓存</span></div>` : ''}
           ${drift ? `<div class="drift-banner"><span class="badge red">已漂移</span><span>${escapeHtml(live.drift_reason || '')}</span></div>` : ''}
         </div>
         <div class="card-actions">
-          ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(node.id)}" data-drift="${escapeHtml(drift)}"><i data-lucide="wrench"></i>一键修复</button>` : ''}
-          <button class="btn sm" data-action="status" data-id="${escapeHtml(node.id)}"><i data-lucide="activity"></i>检查状态</button>
-          <button class="btn sm" data-action="share" data-id="${escapeHtml(node.id)}"><i data-lucide="share-2"></i>分享</button>
-          <button class="btn sm" data-action="edit" data-id="${escapeHtml(node.id)}"><i data-lucide="pencil"></i>编辑</button>
-          <button class="btn sm danger" data-action="delete" data-id="${escapeHtml(node.id)}"><i data-lucide="trash-2"></i>删除</button>
+          ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(node.id)}" data-drift="${escapeHtml(drift)}" title="${escapeHtml(repairActionLabel(drift))}"><i data-lucide="wrench"></i>${escapeHtml(repairActionLabel(drift))}</button>` : ''}
+          <button class="btn sm" data-action="status" data-id="${escapeHtml(node.id)}" title="实时检查该服务器状态"><i data-lucide="activity"></i>状态</button>
+          <button class="btn sm" data-action="share" data-id="${escapeHtml(node.id)}" title="查看分享链接"><i data-lucide="share-2"></i>分享</button>
+          <button class="btn sm" data-action="edit" data-id="${escapeHtml(node.id)}" title="编辑节点配置"><i data-lucide="pencil"></i>编辑</button>
+          <button class="btn sm danger" data-action="delete" data-id="${escapeHtml(node.id)}" title="删除面板中的节点配置"><i data-lucide="trash-2"></i>删除</button>
         </div>
       </div>
     `;
@@ -458,7 +504,7 @@ function openServerModal(server = null) {
       <div class="modal">
         <div class="modal-head">
           <h2>${isEdit ? '编辑服务器' : '添加服务器'}</h2>
-          <button class="icon-btn" data-close><i data-lucide="x"></i></button>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
         </div>
         <form id="server-form" class="modal-body">
           <div class="form-grid">
@@ -466,8 +512,8 @@ function openServerModal(server = null) {
               <label>快速粘贴服务器信息</label>
               <textarea id="server-paste" placeholder="支持：root@1.2.3.4:22 密码；1.2.3.4:22:root:密码；1.2.3.4 22 root 密码"></textarea>
               <div class="paste-actions">
-                <button type="button" class="btn ghost sm" id="parse-server-btn"><i data-lucide="wand-2"></i>识别并填充</button>
-                <button type="button" class="btn primary sm" id="quick-save-server-btn"><i data-lucide="zap"></i>识别并保存</button>
+                <button type="button" class="btn ghost sm" id="parse-server-btn" title="解析粘贴内容并填充表单"><i data-lucide="wand-2"></i>识别并填充</button>
+                <button type="button" class="btn primary sm" id="quick-save-server-btn" title="解析粘贴内容并直接保存"><i data-lucide="zap"></i>识别并保存</button>
               </div>
             </div>
             <div class="field full">
@@ -582,27 +628,23 @@ function openServerModal(server = null) {
       return;
     }
     fillServerFromParsed(parsed, true);
-    try {
+    withBusy($('#quick-save-server-btn'), '保存中...', async () => {
       await persistServer(readServerPayload());
       closeModal();
       await loadAll();
-      toast(isEdit ? '服务器已更新' : '服务器已添加');
-    } catch (error) {
-      toast(error.message, 'error');
-    }
+      toast(isEdit ? '服务器已更新' : '服务器已添加', 'success');
+    }).catch((error) => toast(error.message, 'error'));
   });
 
   $('#server-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
-    try {
+    withBusy($('button[type="submit"][form="server-form"]'), '保存中...', async () => {
       await persistServer(readServerPayload());
       closeModal();
       await loadAll();
-      toast(isEdit ? '服务器已更新' : '服务器已添加');
-    } catch (error) {
-      toast(error.message, 'error');
-    }
+      toast(isEdit ? '服务器已更新' : '服务器已添加', 'success');
+    }).catch((error) => toast(error.message, 'error'));
   });
 }
 
@@ -619,7 +661,7 @@ function openNodeModal(serverId, node = null) {
       <div class="modal wide">
         <div class="modal-head">
           <h2>${isEdit ? '编辑节点' : '添加节点'}</h2>
-          <button class="icon-btn" data-close><i data-lucide="x"></i></button>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
         </div>
         <form id="node-form" class="modal-body">
           <div class="form-grid">
@@ -693,7 +735,7 @@ function openNodeModal(serverId, node = null) {
                   <option value="">选择预设</option>
                   ${REALITY_PRESETS.map((preset) => `<option value="${escapeHtml(preset.name)}">${escapeHtml(preset.name)}</option>`).join('')}
                 </select>
-                <button type="button" class="btn ghost" id="random-reality-btn"><i data-lucide="shuffle"></i>随机</button>
+                <button type="button" class="btn ghost" id="random-reality-btn" title="随机轮换 Reality 伪装站点"><i data-lucide="shuffle"></i>随机</button>
               </div>
             </div>
             <div class="field full reality-field" style="${security === 'reality' ? '' : 'display:none'}">
@@ -713,7 +755,7 @@ function openNodeModal(serverId, node = null) {
               <input name="public_key" value="${escapeHtml(node?.public_key || '')}" placeholder="客户端分享链接使用">
             </div>
             <div class="field full reality-field" style="${security === 'reality' ? '' : 'display:none'}">
-              <button type="button" class="btn ghost" id="gen-reality-btn"><i data-lucide="key-round"></i>生成 Reality 密钥对</button>
+              <button type="button" class="btn ghost" id="gen-reality-btn" title="生成本地 X25519 Reality 密钥对"><i data-lucide="key-round"></i>生成 Reality 密钥对</button>
             </div>
             <div class="field full reality-field" style="${security === 'reality' ? '' : 'display:none'}">
               <label>shortIds</label>
@@ -730,7 +772,7 @@ function openNodeModal(serverId, node = null) {
             <div class="field full">
               <label>客户端</label>
               <div id="clients-editor"></div>
-              <button type="button" class="btn ghost sm" id="add-client-btn"><i data-lucide="user-plus"></i>添加客户端</button>
+              <button type="button" class="btn ghost sm" id="add-client-btn" title="添加一个客户端账号"><i data-lucide="user-plus"></i>添加客户端</button>
             </div>
             <div class="field">
               <label class="hint">启用</label>
@@ -740,8 +782,8 @@ function openNodeModal(serverId, node = null) {
         </form>
         <div class="modal-foot">
           <button class="btn ghost" data-close>取消</button>
-          <button class="btn primary" type="submit" form="node-form" id="save-node-btn"><i data-lucide="save"></i>保存</button>
-          <button class="btn accent" type="submit" form="node-form" id="save-deploy-node-btn"><i data-lucide="upload-cloud"></i>保存并部署</button>
+          <button class="btn primary" type="submit" form="node-form" id="save-node-btn" title="仅保存节点配置"><i data-lucide="save"></i>保存</button>
+          <button class="btn accent" type="submit" form="node-form" id="save-deploy-node-btn" title="保存节点并写入服务器配置后重启 Xray"><i data-lucide="upload-cloud"></i>保存并部署</button>
         </div>
       </div>
     </div>
@@ -890,20 +932,12 @@ function openNodeModal(serverId, node = null) {
   if (realityButton) {
     realityButton.addEventListener('click', async () => {
       if (!serverId) return;
-      realityButton.disabled = true;
-      realityButton.textContent = '生成中...';
-      try {
+      withBusy(realityButton, '生成中...', async () => {
         const pair = await api(`/api/servers/${serverId}/x25519`, { method: 'POST' });
         $('input[name="private_key"]').value = pair.privateKey;
         $('input[name="public_key"]').value = pair.publicKey;
-        toast('Reality 密钥对已生成');
-      } catch (error) {
-        toast(error.message, 'error');
-      } finally {
-        realityButton.disabled = false;
-        realityButton.innerHTML = '<i data-lucide="key-round"></i>生成 Reality 密钥对';
-        refreshIcons();
-      }
+        toast('Reality 密钥对已生成', 'success');
+      }).catch((error) => toast(error.message, 'error'));
     });
   }
 
@@ -988,7 +1022,7 @@ function openNodeModal(serverId, node = null) {
           await loadAll();
         }
       } else {
-        toast('节点已保存');
+        toast('节点已保存', 'success');
       }
     } catch (error) {
       toast(error.message, 'error');
@@ -997,11 +1031,11 @@ function openNodeModal(serverId, node = null) {
 
   $('#save-node-btn').addEventListener('click', (event) => {
     event.preventDefault();
-    saveAndDeploy(false);
+    withBusy($('#save-node-btn'), '保存中...', () => saveAndDeploy(false)).catch((error) => toast(error.message, 'error'));
   });
   $('#save-deploy-node-btn').addEventListener('click', (event) => {
     event.preventDefault();
-    saveAndDeploy(true);
+    withBusy($('#save-deploy-node-btn'), '部署中...', () => saveAndDeploy(true)).catch((error) => toast(error.message, 'error'));
   });
 }
 
@@ -1013,7 +1047,7 @@ function routeNodeCard(node, role) {
     : state.routes.some((route) => route.outbound_node_id === node.id);
   const server = state.servers.find((item) => item.id === node.server_id);
   return `
-    <div class="route-node ${selected ? 'selected' : ''} ${connected ? 'connected' : ''}" data-route-role="${role}" data-node-id="${escapeHtml(node.id)}">
+    <div class="route-node ${selected ? 'selected' : ''} ${connected ? 'connected' : ''}" data-route-role="${role}" data-node-id="${escapeHtml(node.id)}" role="button" title="${role === 'inbound' ? '选择入站节点' : '选择出站节点'}" aria-pressed="${selected}">
       <div class="route-node-main">
         <span class="route-node-name">${escapeHtml(node.name)}</span>
         <span class="hint">${escapeHtml(server ? server.name + ' · ' + server.host : '')}</span>
@@ -1035,10 +1069,10 @@ function renderRoutes() {
   $('#outbound-count').textContent = outboundNodes.length + ' 个';
   inboundList.innerHTML = inboundNodes.length
     ? inboundNodes.map((node) => routeNodeCard(node, 'inbound')).join('')
-    : emptyState('还没有入站节点，请先添加');
+    : emptyState('还没有入站节点，请先添加', { icon: 'log-in', action: 'go-nodes', actionLabel: '添加节点' });
   $('#route-outbound-list').innerHTML = outboundNodes.length
     ? outboundNodes.map((node) => routeNodeCard(node, 'outbound')).join('')
-    : emptyState('还没有出站节点，请先添加');
+    : emptyState('还没有出站节点，请先添加', { icon: 'log-out', action: 'go-nodes', actionLabel: '添加节点' });
   $('#route-link-list').innerHTML = state.routes.length
     ? state.routes.map((route) => {
         const inbound = state.nodes.find((node) => node.id === route.inbound_node_id);
@@ -1051,11 +1085,11 @@ function renderRoutes() {
               <span>${escapeHtml(outbound?.name || route.outbound_node?.name || '未知')}</span>
               <span class="hint">${escapeHtml(inbound?.server?.host || route.inbound_node?.server?.host || '')}:${escapeHtml(inbound?.port || route.inbound_node?.port || '')} → ${escapeHtml(outbound?.server?.host || route.outbound_node?.server?.host || '')}:${escapeHtml(outbound?.port || route.outbound_node?.port || '')}</span>
             </div>
-            <button class="btn sm danger" data-remove-route="${escapeHtml(route.id)}"><i data-lucide="trash-2"></i>断开</button>
+            <button class="btn sm danger" data-remove-route="${escapeHtml(route.id)}" title="断开该链路并重新部署入站服务器"><i data-lucide="trash-2"></i>断开</button>
           </div>
         `;
       }).join('')
-    : emptyState('还没有连接，选择入站和出站后点击“连接所选节点”');
+    : emptyState('还没有连接，选择入站和出站后点击“连接所选节点”', { icon: 'route', action: 'go-nodes', actionLabel: '去节点页' });
   $('#create-route-btn').disabled = !(state.selectedInboundId && state.selectedOutboundId);
   refreshIcons();
 }
@@ -1092,6 +1126,10 @@ async function createSelectedRoute() {
   const inboundNode = state.nodes.find((node) => node.id === state.selectedInboundId);
   const outboundNode = state.nodes.find((node) => node.id === state.selectedOutboundId);
   if (!inboundNode || !outboundNode) return;
+  const button = $('#create-route-btn');
+  const original = button.innerHTML;
+  button.disabled = true;
+  button.textContent = '连接中...';
   openProgressModal('连接路由', '正在保存路由关系...');
   try {
     await api('/api/routes', {
@@ -1124,13 +1162,44 @@ async function createSelectedRoute() {
     state.selectedOutboundId = null;
     await loadAll();
   }
+  finally {
+    button.disabled = false;
+    button.innerHTML = original;
+    refreshIcons();
+  }
 }
 
-async function removeRoute(routeId) {
+async function removeRoute(routeId, button = null) {
   const route = state.routes.find((item) => item.id === routeId);
   const inboundNode = route && (state.nodes.find((node) => node.id === route.inbound_node_id) || route.inbound_node);
   if (!route || !inboundNode?.server_id) return;
-  if (!window.confirm('断开这条入站到出站的连接？')) return;
+  openConfirmModal({
+    title: '断开路由',
+    message: [
+      '将删除该入站到出站的连接关系。',
+      '会重新部署入站服务器，出站链路随即停止转发。'
+    ],
+    confirmText: '断开',
+    onConfirm: async () => {
+      if (button) {
+        const original = button.innerHTML;
+        button.disabled = true;
+        button.textContent = '断开中...';
+        try {
+          await runDisconnect(routeId, inboundNode);
+        } finally {
+          button.disabled = false;
+          button.innerHTML = original;
+          refreshIcons();
+        }
+      } else {
+        await runDisconnect(routeId, inboundNode);
+      }
+    }
+  });
+}
+
+async function runDisconnect(routeId, inboundNode) {
   openProgressModal('断开路由', '正在删除路由关系...');
   try {
     await api('/api/routes/' + routeId, { method: 'DELETE' });
@@ -1153,7 +1222,7 @@ function openShareModal(node) {
       <div class="modal">
         <div class="modal-head">
           <h2>${escapeHtml(node.name)} 分享链接</h2>
-          <button class="icon-btn" data-close><i data-lucide="x"></i></button>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
         </div>
         <div class="modal-body">
           <div class="share-list">
@@ -1163,7 +1232,7 @@ function openShareModal(node) {
                   <div class="hint">${escapeHtml(client.email || `客户端 ${index + 1}`)}</div>
                   <code>${escapeHtml(client.link)}</code>
                 </div>
-                <button class="btn sm ghost" data-copy="${escapeHtml(client.link)}"><i data-lucide="copy"></i>复制</button>
+                <button class="btn sm ghost" data-copy="${escapeHtml(client.link)}" title="复制分享链接"><i data-lucide="copy"></i>复制</button>
               </div>
             `).join('') : emptyState('该节点没有客户端')}
           </div>
@@ -1179,7 +1248,7 @@ function openShareModal(node) {
     button.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(button.dataset.copy);
-        toast('已复制');
+        toast('已复制', 'success');
       } catch {
         toast('复制失败，请手动选择', 'error');
       }
@@ -1193,7 +1262,7 @@ function openResultModal(title, text, raw = false) {
       <div class="modal wide">
         <div class="modal-head">
           <h2>${escapeHtml(title)}</h2>
-          <button class="icon-btn" data-close><i data-lucide="x"></i></button>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
         </div>
         <div class="modal-body">
           ${raw
@@ -1353,11 +1422,13 @@ function openStatusModal(server, status) {
   const sshBadge = sshOk
     ? badge('已连接', 'green')
     : badge('连接失败', 'red', status?.ssh?.error || '');
-  const xrayBadge = !xrayInstalled
-    ? badge('未安装', 'red')
-    : xrayRunning
-      ? badge('运行中', 'green')
-      : badge('未运行', 'amber');
+  const xrayBadge = !status?.xray?.bin_present
+    ? badge('二进制缺失', 'red')
+    : !xrayInstalled
+      ? badge('未安装', 'red')
+      : xrayRunning
+        ? badge('运行中', 'green')
+        : badge('服务停止', 'amber');
   const configBadge = !config?.exists
     ? badge('缺失', 'red')
     : !config?.readable
@@ -1376,7 +1447,7 @@ function openStatusModal(server, status) {
         const nodeStatus = status?.nodes?.find((item) => item.id === node.id);
         let stateBadge;
         if (!sshOk || !status) stateBadge = badge('未检查', '');
-        else if (!xrayRunning) stateBadge = badge('服务未运行', 'amber');
+        else if (!xrayRunning) stateBadge = badge('服务停止', 'amber');
         else if (!nodeStatus?.in_config) stateBadge = badge('配置缺失', 'red');
         else if (!nodeStatus?.listening) stateBadge = badge('端口未监听', 'red');
         else stateBadge = badge('监听正常', 'green');
@@ -1399,7 +1470,7 @@ function openStatusModal(server, status) {
           </div>
         `;
       }).join('')
-    : emptyState('该服务器还没有节点');
+    : emptyState('该服务器还没有节点', { icon: 'network' });
 
   setModal(`
     <div class="modal-backdrop">
@@ -1432,14 +1503,14 @@ function openStatusModal(server, status) {
           </div>
           <div class="status-section-head">
             <span>节点实际状态</span>
-            <span>最近检查 ${escapeHtml(formatTime(status.checked_at))}</span>
+            <span>实时 · 最近检查 ${escapeHtml(formatTime(status.checked_at))}</span>
           </div>
           <div class="status-node-list">${nodeRows}</div>
           ` : ''}
         </div>
         <div class="modal-foot">
           <button class="btn ghost" data-close>关闭</button>
-          <button class="btn primary" id="recheck-status-btn"><i data-lucide="refresh-cw"></i>重新检查</button>
+          <button class="btn primary" id="recheck-status-btn" title="重新实时检查"><i data-lucide="refresh-cw"></i>重新检查</button>
         </div>
       </div>
     </div>
@@ -1455,7 +1526,7 @@ function openRepairConfirmModal(server, driftType, driftReason) {
     <div class="modal-backdrop">
       <div class="modal">
         <div class="modal-head">
-          <h2>确认修复</h2>
+          <h2>确认${repairActionLabel(driftType)}</h2>
           <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
         </div>
         <div class="modal-body">
@@ -1467,7 +1538,7 @@ function openRepairConfirmModal(server, driftType, driftReason) {
         </div>
         <div class="modal-foot">
           <button class="btn ghost" data-close>取消</button>
-          <button class="btn danger" id="confirm-repair-btn"><i data-lucide="wrench"></i>确认修复</button>
+          <button class="btn danger" id="confirm-repair-btn" title="确认执行"><i data-lucide="wrench"></i>确认${repairActionLabel(driftType)}</button>
         </div>
       </div>
     </div>
@@ -1476,9 +1547,42 @@ function openRepairConfirmModal(server, driftType, driftReason) {
   $('#confirm-repair-btn').addEventListener('click', () => runRepair(server, driftType));
 }
 
+function openConfirmModal({ title, message = [], confirmText = '确认', danger = true, onConfirm }) {
+  const lines = Array.isArray(message) ? message : [message];
+  setModal(`
+    <div class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>${escapeHtml(title)}</h2>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="confirm-message">${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join('')}</div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn ghost" data-close>取消</button>
+          <button class="btn ${danger ? 'danger' : 'primary'}" id="confirm-action-btn" title="确认执行">${escapeHtml(confirmText)}</button>
+        </div>
+      </div>
+    </div>
+  `);
+  $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
+  $('#confirm-action-btn').addEventListener('click', () => {
+    closeModal();
+    onConfirm();
+  });
+}
+
+function handleEmptyAction(action) {
+  if (action === 'add-server') openServerModal();
+  if (action === 'add-node') openNodeModal(state.selectedServerId);
+  if (action === 'go-servers') $$('.nav-item[data-view="servers"]')[0]?.click();
+  if (action === 'go-nodes') $$('.nav-item[data-view="nodes"]')[0]?.click();
+}
+
 async function runRepair(server, driftType) {
   if (!server || !driftType) return;
-  openProgressModal('正在修复', `正在对「${server.name}」执行修复...`);
+  openProgressModal(`正在${repairActionLabel(driftType)}`, `正在对「${server.name}」执行${repairActionLabel(driftType)}...`);
   try {
     const result = await api(`/api/servers/${server.id}/repair`, {
       method: 'POST',
@@ -1530,10 +1634,26 @@ async function runServerAction(action, serverId, button) {
       openServerModal(server);
     }
     if (action === 'delete') {
-      if (!window.confirm(`删除服务器「${state.servers.find((item) => item.id === serverId)?.name || ''}」？其节点也会一并删除。`)) return;
-      await api(`/api/servers/${serverId}`, { method: 'DELETE' });
-      toast('服务器已删除');
-      await loadAll();
+      const server = state.servers.find((item) => item.id === serverId);
+      openConfirmModal({
+        title: '删除服务器',
+        message: [
+          `将删除「${server?.name || ''}」的本地配置，以及该服务器下的全部节点和路由。`,
+          '不会影响 VPS 上已运行的服务。'
+        ],
+        confirmText: '删除',
+        onConfirm: async () => {
+          await withBusy(button, '删除中...', async () => {
+            try {
+              await api(`/api/servers/${serverId}`, { method: 'DELETE' });
+              toast('服务器已删除', 'success');
+              await loadAll();
+            } catch (error) {
+              toast(error.message, 'error');
+            }
+          });
+        }
+      });
     }
   } catch (error) {
     toast(error.message, 'error');
@@ -1560,17 +1680,25 @@ async function runNodeAction(action, nodeId, button) {
   if (action === 'share') openShareModal(node);
   if (action === 'edit') openNodeModal(node.server_id, node);
   if (action === 'delete') {
-    if (!window.confirm(`删除节点「${node.name}」？`)) return;
-    button.disabled = true;
-    try {
-      await api(`/api/nodes/${nodeId}`, { method: 'DELETE' });
-      toast('节点已删除');
-      await loadAll();
-    } catch (error) {
-      toast(error.message, 'error');
-    } finally {
-      button.disabled = false;
-    }
+    openConfirmModal({
+      title: '删除节点',
+      message: [
+        `将删除面板中的节点「${node.name}」配置。`,
+        '不影响服务器上已部署的 Xray，重新部署服务器后该入站才会被移除。'
+      ],
+      confirmText: '删除',
+      onConfirm: async () => {
+        await withBusy(button, '删除中...', async () => {
+          try {
+            await api(`/api/nodes/${nodeId}`, { method: 'DELETE' });
+            toast('节点已删除', 'success');
+            await loadAll();
+          } catch (error) {
+            toast(error.message, 'error');
+          }
+        });
+      }
+    });
   }
 }
 
@@ -1608,25 +1736,22 @@ function wireEvents() {
     renderNodes();
   });
 
-  $('#deploy-server-btn').addEventListener('click', async (event) => {
+  $('#deploy-server-btn').addEventListener('click', (event) => {
     const button = event.currentTarget;
     if (!state.selectedServerId) return;
-    button.disabled = true;
-    openProgressModal('部署全部节点', '正在连接服务器并部署...');
-    try {
-      const result = await api(`/api/servers/${state.selectedServerId}/deploy`, { method: 'POST' });
-      closeProgressModal();
-      openResultModal('部署结果', result.restart?.stdout + '\n' + result.status?.listening || '完成');
-      await loadAll();
-    } catch (error) {
-      closeProgressModal();
-      toast(error.message, 'error');
-      await loadAll();
-    } finally {
-      button.disabled = false;
-      button.innerHTML = '<i data-lucide="upload-cloud"></i>部署全部节点';
-      refreshIcons();
-    }
+    withBusy(button, '部署中...', async () => {
+      openProgressModal('部署全部节点', '正在连接服务器并部署...');
+      try {
+        const result = await api(`/api/servers/${state.selectedServerId}/deploy`, { method: 'POST' });
+        closeProgressModal();
+        openResultModal('部署结果', result.restart?.stdout + '\n' + result.status?.listening || '完成');
+        await loadAll();
+      } catch (error) {
+        closeProgressModal();
+        toast(error.message, 'error');
+        await loadAll();
+      }
+    });
   });
 
   $('#server-grid').addEventListener('click', (event) => {
@@ -1666,7 +1791,7 @@ function wireEvents() {
   $('#route-link-list').addEventListener('click', (event) => {
     const button = event.target.closest('[data-remove-route]');
     if (!button) return;
-    removeRoute(button.dataset.removeRoute);
+    removeRoute(button.dataset.removeRoute, button);
   });
 
   $('#overview-nodes').addEventListener('click', (event) => {
@@ -1682,6 +1807,11 @@ function wireEvents() {
 
   $('#modal-root').addEventListener('click', (event) => {
     if (event.target.classList.contains('modal-backdrop')) closeModal();
+  });
+
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-empty-action]');
+    if (button) handleEmptyAction(button.dataset.emptyAction);
   });
 }
 

@@ -16,16 +16,16 @@
         <span>VPS Console</span>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-view="overview">
+        <button class="nav-item active" data-view="overview" title="总览">
           <i data-lucide="layout-dashboard"></i><span>总览</span>
         </button>
-        <button class="nav-item" data-view="servers">
+        <button class="nav-item" data-view="servers" title="服务器">
           <i data-lucide="server"></i><span>服务器</span>
         </button>
-        <button class="nav-item" data-view="nodes">
+        <button class="nav-item" data-view="nodes" title="节点">
           <i data-lucide="network"></i><span>节点</span>
         </button>
-        <button class="nav-item" data-view="routes">
+        <button class="nav-item" data-view="routes" title="路由">
           <i data-lucide="route"></i><span>路由</span>
         </button>
       </nav>
@@ -75,7 +75,7 @@
         <div class="panel">
           <div class="panel-head">
             <h2>最近节点</h2>
-            <button id="overview-go-nodes" class="btn ghost sm">
+            <button id="overview-go-nodes" class="btn ghost sm" title="前往节点页">
               <i data-lucide="arrow-right"></i>
               查看节点
             </button>
@@ -88,12 +88,12 @@
         <div class="page-toolbar">
           <div class="toolbar-copy">管理 SSH 连接与远程部署目标</div>
           <div class="toolbar-actions">
-            <label class="auto-repair-toggle" title="开启后自动提示服务停止类漂移，执行前仍需确认">
+            <label class="auto-repair-toggle" title="开启后检测到服务停止会弹出确认框，不会自动执行">
               <span>自动修复</span>
               <input type="checkbox" id="auto-repair-switch">
               <span class="switch"></span>
             </label>
-            <button id="add-server-btn" class="btn primary">
+            <button id="add-server-btn" class="btn primary" title="添加服务器">
               <i data-lucide="plus"></i>
               添加服务器
             </button>
@@ -111,11 +111,11 @@
             </label>
           </div>
           <div class="toolbar-actions">
-            <button id="deploy-server-btn" class="btn accent">
+            <button id="deploy-server-btn" class="btn accent" title="生成并写入全部节点配置，然后重启 Xray">
               <i data-lucide="upload-cloud"></i>
               部署全部节点
             </button>
-            <button id="add-node-btn" class="btn primary">
+            <button id="add-node-btn" class="btn primary" title="添加节点">
               <i data-lucide="plus"></i>
               添加节点
             </button>
@@ -127,8 +127,8 @@
         <div class="page-toolbar">
           <div class="toolbar-copy">选择入站节点和出站节点建立转发链路</div>
           <div class="toolbar-actions">
-            <button id="clear-route-selection-btn" class="btn ghost"><i data-lucide="x"></i>清除选择</button>
-            <button id="create-route-btn" class="btn primary" disabled><i data-lucide="link-2"></i>连接所选节点</button>
+            <button id="clear-route-selection-btn" class="btn ghost" title="清除已选的入站和出站"><i data-lucide="x"></i>清除选择</button>
+            <button id="create-route-btn" class="btn primary" disabled title="连接所选入站和出站"><i data-lucide="link-2"></i>连接所选节点</button>
           </div>
         </div>
         <div class="route-layout">
