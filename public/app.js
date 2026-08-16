@@ -732,6 +732,16 @@ function renderNodes({ motion = true } = {}) {
     }
 
     const serverIds = [...new Set(roleNodes.map((node) => node.server_id))];
+    const serverGroups = serverIds.map((serverId) => {
+      const server = state.servers.find((item) => item.id === serverId);
+      const serverNodes = roleNodes.filter((node) => node.server_id === serverId);
+      return {
+        server,
+        serverNodes,
+        serverLabel: server ? `${server.name} · ${server.host}` : '未知服务器'
+      };
+    });
+    const groupedRoleNodes = serverGroups.flatMap((group) => group.serverNodes);
     return `
       <section class="node-role-section">
         <div class="node-role-head">
@@ -739,23 +749,18 @@ function renderNodes({ motion = true } = {}) {
           ${badge(`${roleNodes.length} 个节点`, tone)}
         </div>
         <div class="node-server-groups">
-          ${serverIds.map((serverId) => {
-            const server = state.servers.find((item) => item.id === serverId);
-            const serverNodes = roleNodes.filter((node) => node.server_id === serverId);
-            const serverLabel = server ? `${server.name} · ${server.host}` : '未知服务器';
-            return `
-              <section class="node-server-group">
-                <div class="node-server-group-head">
-                  <div class="node-server-heading">
-                    <strong>${escapeHtml(serverLabel)}</strong>
-                    <span class="hint">${serverNodes.length} 个${title}节点</span>
-                  </div>
-                  ${server ? `<button class="btn sm accent" data-deploy-server="${escapeHtml(server.id)}" title="写入该服务器的全部节点配置并重启 Xray"><i data-lucide="upload-cloud"></i>部署</button>` : ''}
+          <div class="node-server-toolbar">
+            ${serverGroups.map(({ server, serverNodes, serverLabel }) => `
+              <div class="node-server-group-head">
+                <div class="node-server-heading">
+                  <strong>${escapeHtml(serverLabel)}</strong>
+                  <span class="hint">${serverNodes.length} 个${title}节点</span>
                 </div>
-                <div class="node-grid node-group-grid">${serverNodes.map(renderNodeCard).join('')}</div>
-              </section>
-            `;
-          }).join('')}
+                ${server ? `<button class="btn sm accent" data-deploy-server="${escapeHtml(server.id)}" title="写入该服务器的全部节点配置并重启 Xray"><i data-lucide="upload-cloud"></i>部署</button>` : ''}
+              </div>
+            `).join('')}
+          </div>
+          <div class="node-grid node-group-grid">${groupedRoleNodes.map(renderNodeCard).join('')}</div>
         </div>
       </section>
     `;

@@ -850,23 +850,26 @@ textarea {
 
 .node-server-groups {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: start;
-  gap: 18px;
+  gap: 12px;
   padding-top: 14px;
 }
 
-.node-server-group {
-  display: contents;
+.node-server-toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 10px;
 }
 
 .node-server-group-head {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 0 2px 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-muted);
 }
 
 .node-server-heading {
@@ -882,8 +885,7 @@ textarea {
 }
 
 .node-group-grid {
-  display: contents;
-  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .node-role-empty {
@@ -1895,8 +1897,11 @@ textarea:focus-visible {
   }
 
   .server-grid,
-  .node-server-groups,
   .node-group-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .node-server-toolbar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1986,7 +1991,7 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .node-server-groups {
+  .node-server-toolbar {
     grid-template-columns: 1fr;
   }
 
