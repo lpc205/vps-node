@@ -40,6 +40,10 @@
   --shadow-2: 0 4px 12px rgba(16, 24, 40, 0.08), 0 12px 28px rgba(16, 24, 40, 0.08);
   --shadow: var(--shadow-1);
   --focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.16);
+  --motion-fast: 150ms;
+  --motion-normal: 220ms;
+  --ease-standard: cubic-bezier(0.2, 0.65, 0.3, 1);
+  --ease-spring: cubic-bezier(0.22, 0.9, 0.32, 1.08);
 }
 
 :root {
@@ -144,6 +148,7 @@ textarea {
 
 button {
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .app {
@@ -202,7 +207,7 @@ button {
 
 .nav-item {
   position: relative;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-spring);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -219,17 +224,23 @@ button {
 .nav-item svg {
   width: 18px;
   height: 18px;
+  transition: transform var(--motion-fast) var(--ease-spring);
 }
 
 .nav-item:hover {
   background: rgba(255, 255, 255, 0.06);
   color: #ffffff;
+  transform: translateX(2px);
 }
 
 .nav-item.active {
   background: rgba(94, 234, 212, 0.1);
   border-color: transparent;
   color: #ffffff;
+}
+
+.nav-item.active svg {
+  transform: scale(1.08);
 }
 
 .nav-item.active::before {
@@ -461,16 +472,29 @@ button {
   border-radius: var(--radius);
   background: var(--panel);
   color: var(--muted);
+  transition: transform var(--motion-fast) var(--ease-spring), color var(--motion-fast) ease, border-color var(--motion-fast) ease, background-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
 
 .icon-btn:hover {
   color: var(--ink);
   border-color: #9aa8b3;
+  box-shadow: var(--shadow-1);
 }
 
 .icon-btn svg {
   width: 18px;
   height: 18px;
+  transition: transform var(--motion-fast) var(--ease-spring);
+}
+
+.icon-btn:not(:disabled):active,
+.btn:not(:disabled):active,
+.reveal-btn:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.icon-btn:hover svg {
+  transform: scale(1.08);
 }
 
 .icon-btn.loading svg {
@@ -488,7 +512,7 @@ button {
 
 .view.active {
   display: block;
-  animation: view-in 0.16s ease;
+  animation: view-in 0.24s var(--ease-standard);
 }
 
 .metric-grid {
@@ -508,6 +532,13 @@ button {
   border-radius: var(--radius);
   background: var(--panel);
   box-shadow: var(--shadow);
+  transition: transform var(--motion-normal) var(--ease-spring), border-color var(--motion-fast) ease, box-shadow var(--motion-normal) ease;
+}
+
+.metric:hover {
+  transform: translateY(-2px);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-2);
 }
 
 .metric-icon {
@@ -518,6 +549,11 @@ button {
   height: 44px;
   border-radius: var(--radius);
   flex: 0 0 auto;
+  transition: transform var(--motion-normal) var(--ease-spring);
+}
+
+.metric:hover .metric-icon {
+  transform: scale(1.08) rotate(-3deg);
 }
 
 .metric-icon svg {
@@ -654,12 +690,29 @@ textarea {
   color: var(--ink);
   font-weight: 550;
   white-space: nowrap;
+  transition: transform var(--motion-fast) var(--ease-spring), background-color var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
 
 .btn svg {
   width: 16px;
   height: 16px;
   flex: 0 0 auto;
+  transition: transform var(--motion-fast) var(--ease-spring);
+}
+
+.btn:hover:not(:disabled) svg {
+  transform: translateX(1px);
+}
+
+.btn-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.btn-loading svg {
+  animation: spin 0.8s linear infinite;
 }
 
 .btn.primary {
@@ -669,6 +722,7 @@ textarea {
 
 .btn.primary:hover {
   background: #0b625c;
+  box-shadow: 0 5px 14px rgba(15, 118, 110, 0.2);
 }
 
 .btn.accent {
@@ -678,6 +732,7 @@ textarea {
 
 .btn.accent:hover {
   background: #4338ca;
+  box-shadow: 0 5px 14px rgba(79, 70, 229, 0.2);
 }
 
 .btn.ghost {
@@ -689,6 +744,7 @@ textarea {
 .btn.ghost:hover {
   color: var(--ink);
   border-color: #9aa8b3;
+  box-shadow: var(--shadow-1);
 }
 
 .btn.danger {
@@ -732,14 +788,25 @@ textarea {
 
 .server-card,
 .node-card {
-  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: transform var(--motion-normal) var(--ease-spring), border-color var(--motion-fast) ease, box-shadow var(--motion-normal) ease;
 }
 
 .server-card:hover,
 .node-card:hover {
-  transform: translateY(-1px);
+  transform: translateY(-2px);
   border-color: var(--line-strong);
   box-shadow: var(--shadow-2);
+}
+
+.server-card:focus-within,
+.node-card:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12), var(--shadow-1);
+}
+
+.stagger-in {
+  animation: card-in 0.32s var(--ease-spring) both;
+  animation-delay: var(--stagger, 0ms);
 }
 
 .server-card-head,
@@ -963,6 +1030,10 @@ textarea {
   animation: backdrop-in 0.16s ease;
 }
 
+.modal-backdrop.closing {
+  animation: backdrop-out 0.16s ease forwards;
+}
+
 .modal {
   width: min(680px, 100%);
   max-height: min(88vh, 900px);
@@ -974,6 +1045,10 @@ textarea {
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.24);
   overflow: hidden;
   animation: modal-in 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.modal.closing {
+  animation: modal-out 0.16s ease forwards;
 }
 
 .modal.wide {
@@ -1391,6 +1466,17 @@ textarea:focus-visible {
   place-items: center;
   min-height: 160px;
   color: var(--muted);
+  gap: 10px;
+}
+
+.status-loading::before {
+  content: '';
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 @media (max-width: 640px) {
@@ -1436,12 +1522,40 @@ textarea:focus-visible {
   }
 }
 
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes text-swap {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @keyframes backdrop-in {
   from {
     opacity: 0;
   }
   to {
     opacity: 1;
+  }
+}
+
+@keyframes backdrop-out {
+  to {
+    opacity: 0;
   }
 }
 
@@ -1453,6 +1567,13 @@ textarea:focus-visible {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+@keyframes modal-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
   }
 }
 
@@ -1472,6 +1593,27 @@ textarea:focus-visible {
     opacity: 0;
     transform: translateY(8px);
   }
+}
+
+@keyframes toast-life {
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes selection-pulse {
+  0%, 100% {
+    opacity: 0.75;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+.text-swap {
+  animation: text-swap 0.22s var(--ease-standard);
 }
 
 .toast.leaving {
@@ -1497,6 +1639,8 @@ textarea:focus-visible {
 }
 
 .toast {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1511,8 +1655,24 @@ textarea:focus-visible {
   animation: toast-in 0.18s ease;
 }
 
+.toast::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--teal);
+  transform-origin: left;
+  animation: toast-life 4.2s linear forwards;
+}
+
 .toast.error {
   border-left-color: var(--red);
+}
+
+.toast.error::after {
+  background: var(--red);
 }
 
 .toast svg {
@@ -1523,6 +1683,10 @@ textarea:focus-visible {
 
 .toast.success {
   border-left-color: var(--green);
+}
+
+.toast.success::after {
+  background: var(--green);
 }
 
 .toast.success svg {
@@ -1663,6 +1827,8 @@ textarea:focus-visible {
   border-radius: var(--radius);
   background: var(--panel);
   cursor: pointer;
+  position: relative;
+  transition: transform var(--motion-normal) var(--ease-spring), border-color var(--motion-fast) ease, box-shadow var(--motion-normal) ease, background-color var(--motion-fast) ease;
 }
 
 .route-node:hover {
@@ -1673,6 +1839,19 @@ textarea:focus-visible {
   border-color: var(--teal);
   background: var(--teal-soft);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+}
+
+.route-node.selected::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
+  animation: selection-pulse 1.8s ease-in-out infinite;
 }
 
 .route-node.connected {
@@ -1716,6 +1895,13 @@ textarea:focus-visible {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #f8fafb;
+  transition: transform var(--motion-fast) var(--ease-spring), border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+
+.route-link-row:hover {
+  transform: translateY(-1px);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-1);
 }
 
 .route-link-pair {
@@ -1730,6 +1916,12 @@ textarea:focus-visible {
   width: 16px;
   height: 16px;
   color: var(--muted);
+  transition: transform var(--motion-normal) var(--ease-spring), color var(--motion-fast) ease;
+}
+
+.route-link-row:hover .route-link-pair svg {
+  color: var(--primary);
+  transform: translateX(3px);
 }
 
 .route-link-pair .hint {
@@ -1898,7 +2090,7 @@ textarea:focus-visible {
 }
 
 .route-node {
-  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: transform var(--motion-normal) var(--ease-spring), border-color var(--motion-fast) ease, box-shadow var(--motion-normal) ease, background-color var(--motion-fast) ease;
 }
 
 .route-node:hover {

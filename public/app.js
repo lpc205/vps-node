@@ -229,6 +229,8 @@ async function api(path, options = {}) {
 function toast(message, type = 'info') {
   const item = document.createElement('div');
   item.className = `toast ${type}`;
+  item.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  item.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
   const icon = { success: 'check-circle-2', error: 'circle-alert', info: 'info' }[type] || 'info';
   item.innerHTML = `<i data-lucide="${icon}"></i><span></span>`;
   item.querySelector('span').textContent = message;
@@ -242,19 +244,29 @@ async function withBusy(button, busyText, fn) {
   if (!button) return fn();
   const original = button.innerHTML;
   button.disabled = true;
-  button.textContent = busyText;
+  button.setAttribute('aria-busy', 'true');
+  button.innerHTML = `<span class="btn-loading"><i data-lucide="loader-circle"></i>${escapeHtml(busyText)}</span>`;
+  refreshIcons();
   try {
     return await fn();
   } finally {
     button.disabled = false;
+    button.removeAttribute('aria-busy');
     button.innerHTML = original;
     refreshIcons();
   }
 }
 
 function setPage(title, subtitle) {
-  $('#page-title').textContent = title;
-  $('#page-subtitle').textContent = subtitle;
+  const titleElement = $('#page-title');
+  const subtitleElement = $('#page-subtitle');
+  titleElement.textContent = title;
+  subtitleElement.textContent = subtitle;
+  [titleElement, subtitleElement].forEach((element) => {
+    element.classList.remove('text-swap');
+    void element.offsetWidth;
+    element.classList.add('text-swap');
+  });
 }
 
 function refreshIcons() {
@@ -268,9 +280,48 @@ function setModal(html) {
   refreshIcons();
 }
 
+function animateNumber(element, value) {
+  if (!element) return;
+  const next = Number(value) || 0;
+  const previous = Number(element.dataset.value ?? element.textContent) || 0;
+  element.dataset.value = String(next);
+  if (previous === next || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    element.textContent = String(next);
+    return;
+  }
+  if (element._countAnimationFrame) cancelAnimationFrame(element._countAnimationFrame);
+  const startedAt = performance.now();
+  const duration = 280;
+  const tick = (now) => {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    element.textContent = String(Math.round(previous + (next - previous) * eased));
+    if (progress < 1) element._countAnimationFrame = requestAnimationFrame(tick);
+  };
+  element._countAnimationFrame = requestAnimationFrame(tick);
+}
+
+function animateCollection(container, selector) {
+  if (!container) return;
+  container.querySelectorAll(selector).forEach((item, index) => {
+    item.style.setProperty('--stagger', `${Math.min(index, 8) * 36}ms`);
+    item.classList.add('stagger-in');
+  });
+}
+
 function closeModal() {
   closeTerminalSession();
-  $('#modal-root').innerHTML = '';
+  const root = $('#modal-root');
+  const backdrop = root.querySelector('.modal-backdrop');
+  if (!backdrop) {
+    root.innerHTML = '';
+    return;
+  }
+  backdrop.classList.add('closing');
+  backdrop.querySelector('.modal')?.classList.add('closing');
+  window.setTimeout(() => {
+    if (root.contains(backdrop)) root.innerHTML = '';
+  }, 160);
 }
 
 function closeTerminalSession() {
@@ -456,7 +507,7 @@ async function loadAll() {
     if (state.selectedServerId && !servers.some((server) => server.id === state.selectedServerId)) {
       state.selectedServerId = servers[0]?.id || null;
     }
-    renderAll();
+    renderAll({ motion: true });
     loadStatus();
   } catch (error) {
     toast(error.message, 'error');
@@ -466,6 +517,7 @@ async function loadAll() {
 async function loadStatus() {
   try {
     const payload = await api('/api/status');
+    const hadStatuses = Object.keys(state.statuses).length > 0;
     state.statuses = Object.fromEntries(payload.servers.map((item) => [item.server.id, item]));
     for (const item of payload.servers) {
       recordStatusHistory(item.server.id, item.state, item.status?.last_checked_at || item.status?.updated_at || payload.generated_at);
@@ -480,28 +532,30 @@ async function loadStatus() {
         }
       }
     }
-    renderOverview();
-    renderServers();
-    renderNodes();
+    const motion = !hadStatuses;
+    renderOverview({ motion });
+    renderServers({ motion });
+    renderNodes({ motion });
     refreshIcons();
   } catch { /* keep last known status on transient errors */ }
 }
 
-function renderAll() {
-  renderOverview();
-  renderServers();
-  renderNodes();
-  renderRoutes();
+function renderAll({ motion = true } = {}) {
+  renderOverview({ motion });
+  renderServers({ motion });
+  renderNodes({ motion });
+  renderRoutes({ motion });
   refreshIcons();
 }
 
-function renderOverview() {
-  $('#metric-servers').textContent = state.stats.servers || 0;
-  $('#metric-nodes').textContent = state.stats.nodes || 0;
-  $('#metric-enabled').textContent = state.stats.enabledNodes || 0;
+function renderOverview({ motion = true } = {}) {
+  animateNumber($('#metric-servers'), state.stats.servers || 0);
+  animateNumber($('#metric-nodes'), state.stats.nodes || 0);
+  animateNumber($('#metric-enabled'), state.stats.enabledNodes || 0);
 
   const recent = state.nodes.slice(0, 6);
-  $('#overview-nodes').innerHTML = recent.length
+  const overview = $('#overview-nodes');
+  overview.innerHTML = recent.length
     ? recent.map((node) => {
         const server = state.servers.find((item) => item.id === node.server_id);
         const live = server ? state.statuses[server.id] : null;
@@ -515,12 +569,14 @@ function renderOverview() {
         `;
       }).join('')
     : emptyState('还没有节点，先添加服务器和节点', { icon: 'network', action: 'go-servers', actionLabel: '添加服务器' });
+  if (motion) animateCollection(overview, '.overview-row, .empty-state');
 }
 
-function renderServers() {
+function renderServers({ motion = true } = {}) {
   const grid = $('#server-grid');
   if (!state.servers.length) {
     grid.innerHTML = emptyState('还没有服务器，点击“添加服务器”', { icon: 'server', action: 'add-server', actionLabel: '添加服务器' });
+    if (motion) animateCollection(grid, '.empty-state');
     return;
   }
   grid.innerHTML = state.servers.map((server) => {
@@ -574,9 +630,10 @@ function renderServers() {
       </div>
     `;
   }).join('');
+  if (motion) animateCollection(grid, '.server-card');
 }
 
-function renderNodes() {
+function renderNodes({ motion = true } = {}) {
   const select = $('#node-server-select');
   select.innerHTML = state.servers.length
     ? state.servers.map((server) => `
@@ -595,10 +652,12 @@ function renderNodes() {
     grid.innerHTML = state.servers.length
       ? emptyState('请先选择目标服务器', { icon: 'server' })
       : emptyState('请先添加服务器，再创建节点', { icon: 'server', action: 'go-servers', actionLabel: '添加服务器' });
+    if (motion) animateCollection(grid, '.empty-state');
     return;
   }
   if (!nodes.length) {
     grid.innerHTML = emptyState('该服务器还没有节点，点击“添加节点”', { icon: 'network', action: 'add-node', actionLabel: '添加节点' });
+    if (motion) animateCollection(grid, '.empty-state');
     return;
   }
   grid.innerHTML = nodes.map((node) => {
@@ -660,6 +719,7 @@ function renderNodes() {
       </div>
     `;
   }).join('');
+  if (motion) animateCollection(grid, '.node-card');
 }
 
 function openServerModal(server = null) {
@@ -1338,7 +1398,7 @@ function routeNodeCard(node, role) {
   `;
 }
 
-function renderRoutes() {
+function renderRoutes({ motion = true } = {}) {
   const inboundList = $('#route-inbound-list');
   if (!inboundList) return;
   const inboundNodes = state.nodes.filter((node) => node.role === 'inbound');
@@ -1369,6 +1429,11 @@ function renderRoutes() {
       }).join('')
     : emptyState('还没有连接，选择入站和出站后点击“连接所选节点”', { icon: 'route', action: 'go-nodes', actionLabel: '去节点页' });
   $('#create-route-btn').disabled = !(state.selectedInboundId && state.selectedOutboundId);
+  if (motion) {
+    animateCollection(inboundList, '.route-node, .empty-state');
+    animateCollection($('#route-outbound-list'), '.route-node, .empty-state');
+    animateCollection($('#route-link-list'), '.route-link-row, .empty-state');
+  }
   refreshIcons();
 }
 
@@ -1407,7 +1472,9 @@ async function createSelectedRoute() {
   const button = $('#create-route-btn');
   const original = button.innerHTML;
   button.disabled = true;
-  button.textContent = '连接中...';
+  button.setAttribute('aria-busy', 'true');
+  button.innerHTML = '<span class="btn-loading"><i data-lucide="loader-circle"></i>连接中...</span>';
+  refreshIcons();
   openProgressModal('连接路由', '正在保存路由关系...');
   try {
     await api('/api/routes', {
@@ -1442,6 +1509,7 @@ async function createSelectedRoute() {
   }
   finally {
     button.disabled = false;
+    button.removeAttribute('aria-busy');
     button.innerHTML = original;
     refreshIcons();
   }
@@ -1462,11 +1530,14 @@ async function removeRoute(routeId, button = null) {
       if (button) {
         const original = button.innerHTML;
         button.disabled = true;
-        button.textContent = '断开中...';
+        button.setAttribute('aria-busy', 'true');
+        button.innerHTML = '<span class="btn-loading"><i data-lucide="loader-circle"></i>断开中...</span>';
+        refreshIcons();
         try {
           await runDisconnect(routeId, inboundNode);
         } finally {
           button.disabled = false;
+          button.removeAttribute('aria-busy');
           button.innerHTML = original;
           refreshIcons();
         }
@@ -1935,7 +2006,9 @@ async function runServerAction(action, serverId, button) {
   }
   const original = button.innerHTML;
   button.disabled = true;
-  button.textContent = '执行中...';
+  button.setAttribute('aria-busy', 'true');
+  button.innerHTML = '<span class="btn-loading"><i data-lucide="loader-circle"></i>执行中...</span>';
+  refreshIcons();
   try {
     if (action === 'status') {
       await checkServerStatus(serverId);
@@ -1979,6 +2052,7 @@ async function runServerAction(action, serverId, button) {
     toast(error.message, 'error');
   } finally {
     button.disabled = false;
+    button.removeAttribute('aria-busy');
     button.innerHTML = original;
     refreshIcons();
   }
@@ -2076,7 +2150,7 @@ function wireEvents() {
 
   $('#node-server-select').addEventListener('change', (event) => {
     state.selectedServerId = event.target.value;
-    renderNodes();
+    renderNodes({ motion: true });
   });
 
   $('#deploy-server-btn').addEventListener('click', (event) => {
@@ -2113,14 +2187,14 @@ function wireEvents() {
     const card = event.target.closest('[data-route-role="inbound"]');
     if (!card) return;
     state.selectedInboundId = state.selectedInboundId === card.dataset.nodeId ? null : card.dataset.nodeId;
-    renderRoutes();
+    renderRoutes({ motion: false });
   });
 
   $('#route-outbound-list').addEventListener('click', (event) => {
     const card = event.target.closest('[data-route-role="outbound"]');
     if (!card) return;
     state.selectedOutboundId = state.selectedOutboundId === card.dataset.nodeId ? null : card.dataset.nodeId;
-    renderRoutes();
+    renderRoutes({ motion: false });
   });
 
   $('#create-route-btn').addEventListener('click', createSelectedRoute);
@@ -2128,7 +2202,7 @@ function wireEvents() {
   $('#clear-route-selection-btn').addEventListener('click', () => {
     state.selectedInboundId = null;
     state.selectedOutboundId = null;
-    renderRoutes();
+    renderRoutes({ motion: false });
   });
 
   $('#route-link-list').addEventListener('click', (event) => {
