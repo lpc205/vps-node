@@ -158,9 +158,14 @@ button {
 }
 
 .sidebar {
-  position: sticky;
+  position: fixed;
+  left: 0;
   top: 0;
+  bottom: 0;
+  z-index: 40;
+  width: 232px;
   height: 100vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -433,6 +438,7 @@ button {
 
 .main {
   min-width: 0;
+  grid-column: 2;
   padding: clamp(18px, 2.2vw, 28px) clamp(16px, 2.4vw, 28px) clamp(40px, 4vw, 48px);
 }
 
@@ -844,7 +850,7 @@ textarea {
 
 .node-server-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(520px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
   align-items: start;
   gap: 18px;
   padding-top: 14px;
@@ -1850,7 +1856,9 @@ textarea:focus-visible {
     bottom: 0;
     top: auto;
     z-index: 40;
+    width: auto;
     height: auto;
+    overflow: visible;
     gap: 0;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
     border-top: 1px solid rgba(255, 255, 255, 0.1);
@@ -1880,6 +1888,7 @@ textarea:focus-visible {
   }
 
   .main {
+    grid-column: 1;
     padding: 20px 20px calc(88px + env(safe-area-inset-bottom));
   }
 
@@ -1905,7 +1914,9 @@ textarea:focus-visible {
     bottom: 0;
     top: auto;
     z-index: 40;
+    width: auto;
     height: auto;
+    overflow: visible;
     gap: 0;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
     border-top: 1px solid rgba(255, 255, 255, 0.1);
@@ -1938,6 +1949,7 @@ textarea:focus-visible {
   }
 
   .main {
+    grid-column: 1;
     padding: 18px 16px calc(88px + env(safe-area-inset-bottom));
   }
 
