@@ -565,7 +565,7 @@ function renderServers() {
         <div class="card-actions">
           ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(server.id)}" data-drift="${escapeHtml(drift)}" title="${escapeHtml(repairActionLabel(drift))}"><i data-lucide="wrench"></i>${escapeHtml(repairActionLabel(drift))}</button>` : ''}
           <button class="btn sm" data-action="status" data-id="${escapeHtml(server.id)}" title="实时检查 SSH、Xray 与配置状态"><i data-lucide="activity"></i>状态</button>
-          <button class="btn sm" data-action="terminal" data-id="${escapeHtml(server.id)}" title="打开 SSH 终端"><i data-lucide="terminal"></i>终端</button>
+          <button class="btn sm" data-action="terminal" data-id="${escapeHtml(server.id)}" title="打开 SSH 终端 (T)"><i data-lucide="terminal"></i>终端</button>
           <button class="btn sm" data-action="logs" data-id="${escapeHtml(server.id)}" title="查看 Xray 日志"><i data-lucide="scroll-text"></i>日志</button>
           <button class="btn sm ghost" data-action="edit" data-id="${escapeHtml(server.id)}" title="编辑服务器配置"><i data-lucide="pencil"></i>编辑</button>
           <button class="icon-btn" data-action="delete" data-id="${escapeHtml(server.id)}" title="删除" aria-label="删除"><i data-lucide="trash-2"></i></button>
@@ -2134,7 +2134,22 @@ function wireEvents() {
   });
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && $('#modal-root').innerHTML) closeModal();
+    if (event.key === 'Escape' && $('#modal-root').innerHTML) {
+      closeModal();
+      return;
+    }
+    const typingTarget = event.target?.matches?.('input, textarea, select') || event.target?.isContentEditable;
+    if (typingTarget || event.ctrlKey || event.metaKey || event.altKey) return;
+    const key = event.key.toLowerCase();
+    if (key === 'r') {
+      event.preventDefault();
+      loadAll();
+    }
+    if (key === 't') {
+      const server = state.servers.find((item) => item.id === state.selectedServerId) || state.servers[0];
+      event.preventDefault();
+      if (server) openTerminalModal(server);
+    }
   });
 
   $('#modal-root').addEventListener('click', (event) => {
