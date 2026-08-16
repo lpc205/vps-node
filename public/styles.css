@@ -786,6 +786,11 @@ textarea {
   gap: 14px;
 }
 
+.server-grid > .empty-state {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
 #node-grid {
   grid-template-columns: minmax(0, 1fr);
   gap: 18px;
