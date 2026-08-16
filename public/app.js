@@ -950,7 +950,7 @@ function subscriptionAddressRow(subscriptionId, format, label) {
       <div class="subscription-address-label">${escapeHtml(label)}</div>
       <input readonly value="${escapeHtml(address || '创建或重新生成 Token 后显示')}" aria-label="${escapeHtml(label)}">
       <button class="btn sm ghost" data-sub-copy="${escapeHtml(subscriptionId)}" data-format="${format}" title="复制${escapeHtml(label)}" ${address ? '' : 'disabled'}><i data-lucide="copy"></i>复制</button>
-      <button class="icon-btn" data-sub-download="${escapeHtml(subscriptionId)}" data-format="${format}" title="下载${escapeHtml(label)}" aria-label="下载${escapeHtml(label)}" ${address ? '' : 'disabled'}><i data-lucide="download"></i></button>
+      <button class="icon-btn" data-sub-qr="${escapeHtml(subscriptionId)}" data-format="${format}" title="显示${escapeHtml(label)}二维码" aria-label="显示${escapeHtml(label)}二维码" ${address ? '' : 'disabled'}><i data-lucide="qr-code"></i></button>
     </div>
   `;
 }
@@ -1018,8 +1018,8 @@ function renderSubscriptionDetails(preview) {
     </div>
   `);
   $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
-  $$('#modal-root [data-sub-copy]').forEach((button) => button.addEventListener('click', () => copySubscriptionAddress(button.dataset.subCopy, button.dataset.format)));
-  $$('#modal-root [data-sub-download]').forEach((button) => button.addEventListener('click', () => downloadSubscription(button.dataset.subDownload, button.dataset.format)));
+  $$('#modal-root [data-sub-copy]').forEach((button) => button.addEventListener('click', () => copySubscriptionAddress(button.dataset.subCopy, button.dataset.format, button)));
+  $$('#modal-root [data-sub-qr]').forEach((button) => button.addEventListener('click', () => openSubscriptionQr(button.dataset.subQr, button.dataset.format)));
   $('#modal-root [data-sub-detail-edit]')?.addEventListener('click', () => {
     const item = state.subscriptions.find((entry) => entry.id === subscription.id);
     if (item) openSubscriptionForm(item);
@@ -1044,39 +1044,101 @@ async function openSubscriptionDetails(subscriptionId) {
   }
 }
 
-async function copySubscriptionAddress(subscriptionId, format = 'base64') {
+async function copyText(value) {
+  if (!value) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // HTTP origins may reject the Clipboard API; use the legacy command below.
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '0';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch {
+    copied = false;
+  }
+  textarea.remove();
+  return copied;
+}
+
+function selectSubscriptionAddress(button) {
+  const input = button?.closest('.subscription-address-row')?.querySelector('input');
+  if (!input) return;
+  input.focus();
+  input.select();
+  input.setSelectionRange(0, input.value.length);
+}
+
+async function copySubscriptionAddress(subscriptionId, format = 'base64', button = null) {
   const address = subscriptionAddress(state.subscriptionTokens[subscriptionId], format);
   if (!address) {
     toast('当前页面没有可复制的明文 Token，请先重新生成 Token', 'info');
     return;
   }
-  try {
-    await navigator.clipboard.writeText(address);
+  if (await copyText(address)) {
     toast('订阅地址已复制', 'success');
-  } catch {
-    toast('复制失败，请手动选择地址', 'error');
+  } else {
+    selectSubscriptionAddress(button);
+    toast('自动复制失败，地址已选中，请按 Ctrl+C 复制', 'info');
   }
 }
 
-async function downloadSubscription(subscriptionId, format = 'base64') {
+async function openSubscriptionQr(subscriptionId, format = 'base64') {
   const token = state.subscriptionTokens[subscriptionId];
   if (!token) {
-    toast('当前页面没有可下载的明文 Token，请先重新生成 Token', 'info');
+    toast('当前页面没有可生成二维码的明文 Token，请先重新生成 Token', 'info');
     return;
   }
+  const address = subscriptionAddress(token, format);
+  const formatLabel = format === 'uri' ? '原始 URI 地址' : '通用 Base64 地址';
+  setModal(`
+    <div class="modal-backdrop">
+      <div class="modal subscription-qr-modal">
+        <div class="modal-head">
+          <div>
+            <h2>订阅二维码</h2>
+            <span class="hint">${escapeHtml(formatLabel)}</span>
+          </div>
+          <button class="icon-btn" data-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <div class="modal-body subscription-qr-body">
+          <div class="subscription-qr-loading"><i data-lucide="loader-circle"></i><span>正在生成二维码...</span></div>
+          <img class="subscription-qr-image" data-sub-qr-image alt="订阅二维码" hidden>
+          <div class="subscription-qr-address" title="订阅地址">${escapeHtml(address)}</div>
+          <p class="hint">请使用客户端扫码导入，二维码内容不会上传到第三方服务。</p>
+        </div>
+        <div class="modal-foot"><button class="btn ghost" data-close>关闭</button></div>
+      </div>
+    </div>
+  `);
+  $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
   try {
-    const response = await fetch(`/sub/${encodeURIComponent(token)}?format=${encodeURIComponent(format)}`);
-    if (!response.ok) throw new Error('订阅当前不可用');
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `subscription-${format}.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
-    toast('订阅内容已下载', 'success');
+    const result = await api('/api/subscriptions/qr', {
+      method: 'POST',
+      body: JSON.stringify({ url: address })
+    });
+    const image = $('#modal-root [data-sub-qr-image]');
+    const loading = $('#modal-root .subscription-qr-loading');
+    if (!image || !loading) return;
+    image.src = result.data_url;
+    image.hidden = false;
+    loading.hidden = true;
   } catch (error) {
-    toast(error.message, 'error');
+    closeModal();
+    toast(error.message || '二维码生成失败', 'error');
   }
 }
 
@@ -2055,10 +2117,13 @@ function openShareModal(node) {
   $$('#modal-root [data-copy]').forEach((button) => {
     button.addEventListener('click', async () => {
       try {
-        await navigator.clipboard.writeText(button.dataset.copy);
-        toast('已复制', 'success');
+        if (await copyText(button.dataset.copy)) {
+          toast('已复制', 'success');
+        } else {
+          toast('自动复制失败，请手动选择链接', 'info');
+        }
       } catch {
-        toast('复制失败，请手动选择', 'error');
+        toast('复制失败，请手动选择链接', 'error');
       }
     });
   });

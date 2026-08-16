@@ -128,6 +128,26 @@ test('public subscription returns base64 and URI formats', async () => {
   assert.equal(raw.response.headers.get('content-type'), 'text/plain; charset=utf-8');
 });
 
+test('subscription QR endpoint renders locally and accepts only subscription URLs', async () => {
+  const created = await request('/api/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify({ name: '二维码订阅' })
+  });
+  const token = created.body.token;
+  const qr = await request('/api/subscriptions/qr', {
+    method: 'POST',
+    body: JSON.stringify({ url: `${baseUrl}/sub/${token}` })
+  });
+  assert.equal(qr.response.status, 200);
+  assert.match(qr.body.data_url, /^data:image\/png;base64,/);
+
+  const rejected = await request('/api/subscriptions/qr', {
+    method: 'POST',
+    body: JSON.stringify({ url: 'https://example.com/not-a-subscription' })
+  });
+  assert.equal(rejected.response.status, 400);
+});
+
 test('invalid, disabled and expired subscriptions are rejected', async () => {
   const created = await request('/api/subscriptions', {
     method: 'POST',

@@ -2351,6 +2351,50 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
+.subscription-qr-modal {
+  width: min(430px, 100%);
+}
+
+.subscription-qr-body {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.subscription-qr-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 320px;
+  color: var(--muted);
+}
+
+.subscription-qr-loading svg {
+  width: 18px;
+  height: 18px;
+  animation: spin 0.9s linear infinite;
+}
+
+.subscription-qr-image {
+  width: min(320px, 100%);
+  aspect-ratio: 1;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  object-fit: contain;
+}
+
+.subscription-qr-address {
+  width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .subscription-node-list {
   display: grid;
   gap: 8px;
@@ -2427,6 +2471,14 @@ textarea:focus-visible {
 
   .subscription-address-row {
     grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .subscription-qr-modal {
+    width: min(360px, 100%);
+  }
+
+  .subscription-qr-loading {
+    min-height: 260px;
   }
 
   .subscription-address-label {

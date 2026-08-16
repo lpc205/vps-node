@@ -1,4 +1,5 @@
 import express from 'express';
+import QRCode from 'qrcode';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -299,6 +300,25 @@ app.get('/api/subscriptions/:id/preview', (req, res) => {
   if (!preview) return res.status(404).json({ error: 'subscription not found' });
   res.json(preview);
 });
+
+app.post('/api/subscriptions/qr', asyncHandler(async (req, res) => {
+  const value = String(req.body?.url || '').trim();
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return res.status(400).json({ error: '无效的订阅地址' });
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.pathname.startsWith('/sub/')) {
+    return res.status(400).json({ error: '只支持面板订阅地址' });
+  }
+  const dataUrl = await QRCode.toDataURL(url.toString(), {
+    errorCorrectionLevel: 'M',
+    margin: 2,
+    width: 320
+  });
+  res.json({ data_url: dataUrl });
+}));
 
 app.get('/sub/:token', (req, res) => {
   const subscription = resolvePublicSubscription(req.params.token);
