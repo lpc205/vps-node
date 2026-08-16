@@ -234,6 +234,7 @@ function toast(message, type = 'info') {
   item.querySelector('span').textContent = message;
   $('#toast-root').appendChild(item);
   refreshIcons();
+  setTimeout(() => item.classList.add('leaving'), 3700);
   setTimeout(() => item.remove(), 4200);
 }
 
@@ -2032,7 +2033,17 @@ function wireEvents() {
     });
   });
 
-  $('#refresh-btn').addEventListener('click', loadAll);
+  $('#refresh-btn').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.classList.add('loading');
+    button.disabled = true;
+    try {
+      await loadAll();
+    } finally {
+      button.classList.remove('loading');
+      button.disabled = false;
+    }
+  });
   const themeButton = $('#theme-toggle');
   if (themeButton) {
     themeButton.addEventListener('click', () => {
