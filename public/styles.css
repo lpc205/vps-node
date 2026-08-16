@@ -857,10 +857,11 @@ textarea {
 }
 
 .node-server-group {
-  min-width: 0;
+  display: contents;
 }
 
 .node-server-group-head {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -881,6 +882,7 @@ textarea {
 }
 
 .node-group-grid {
+  display: contents;
   grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
 }
 
