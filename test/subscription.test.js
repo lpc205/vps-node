@@ -94,6 +94,20 @@ test('creates a subscription with a one-time token and stores only its hash', as
   subscription = result.body.subscription;
 });
 
+test('default subscription keeps stable copyable paths across reloads', async () => {
+  const first = await request('/api/subscriptions');
+  const second = await request('/api/subscriptions');
+  assert.equal(first.response.status, 200);
+  assert.equal(first.body.length, 1);
+  assert.equal(first.body[0].id, subscription.id);
+  assert.match(first.body[0].subscription_path, /^\/sub\/[A-Za-z0-9_-]{43}$/);
+  assert.match(first.body[0].subscription_uri_path, /^\/sub\/[A-Za-z0-9_-]{43}\?format=uri$/);
+  assert.equal(second.body[0].subscription_path, first.body[0].subscription_path);
+  const raw = db.getSubscriptionRecord(subscription.id);
+  assert.ok(raw.token_ciphertext);
+  assert.notEqual(raw.token_ciphertext, raw.token_hash);
+});
+
 test('preview includes only enabled inbound nodes and explains exclusions', async () => {
   const result = await request(`/api/subscriptions/${subscription.id}/preview`);
   assert.equal(result.response.status, 200);
@@ -148,7 +162,7 @@ test('subscription QR endpoint renders locally and accepts only subscription URL
   assert.equal(rejected.response.status, 400);
 });
 
-test('invalid, disabled and expired subscriptions are rejected', async () => {
+test('invalid and disabled subscriptions are rejected while expiry is ignored', async () => {
   const created = await request('/api/subscriptions', {
     method: 'POST',
     body: JSON.stringify({ name: '受控订阅' })
@@ -163,7 +177,7 @@ test('invalid, disabled and expired subscriptions are rejected', async () => {
     method: 'PUT',
     body: JSON.stringify({ name: '受控订阅', expires_at: '2020-01-01T00:00:00.000Z', enabled: true, default_format: 'base64' })
   });
-  assert.equal((await request(`/sub/${token}`)).response.status, 404);
+  assert.equal((await request(`/sub/${token}`)).response.status, 200);
 });
 
 test('rotating a token invalidates the old address and updates access metadata', async () => {

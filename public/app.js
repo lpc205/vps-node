@@ -779,9 +779,14 @@ function subscriptionFormatLabel(format) {
   return SUBSCRIPTION_FORMAT_LABELS[format] || 'Base64';
 }
 
-function subscriptionAddress(token, format = 'base64') {
-  if (!token) return '';
-  return `${location.origin}/sub/${encodeURIComponent(token)}${format === 'uri' ? '?format=uri' : ''}`;
+function subscriptionAddress(value, format = 'base64') {
+  if (value && typeof value === 'object') {
+    const path = format === 'uri' ? value.subscription_uri_path : value.subscription_path;
+    if (path) return new URL(path, location.origin).toString();
+    value = state.subscriptionTokens[value.id] || '';
+  }
+  if (!value) return '';
+  return `${location.origin}/sub/${encodeURIComponent(value)}${format === 'uri' ? '?format=uri' : ''}`;
 }
 
 function subscriptionExpiryLabel(value) {
@@ -793,71 +798,38 @@ function subscriptionExpiryLabel(value) {
 function renderSubscriptions({ motion = true } = {}) {
   const grid = $('#subscription-grid');
   if (!grid) return;
-  if (!state.subscriptions.length) {
-    grid.innerHTML = emptyState('还没有订阅，创建后会自动包含所有启用的入口节点', {
-      icon: 'rss',
-      action: 'add-subscription',
-      actionLabel: '创建订阅'
-    });
-    if (motion) animateCollection(grid, '.empty-state');
+  const subscription = state.subscriptions[0];
+  if (!subscription) {
+    grid.innerHTML = '<div class="subscription-single-loading"><i data-lucide="loader-circle"></i><span>正在生成默认订阅...</span></div>';
+    refreshIcons();
     return;
   }
-  grid.innerHTML = state.subscriptions.map((subscription) => {
-    const token = state.subscriptionTokens[subscription.id] || '';
-    const address = subscriptionAddress(token);
-    const enabled = Boolean(subscription.enabled);
-    return `
-      <article class="subscription-card">
-        <div class="subscription-card-head">
-          <div>
-            <h3 title="${escapeHtml(subscription.name)}">${escapeHtml(subscription.name)}</h3>
-            <span class="hint">自动同步入口节点</span>
-          </div>
-          <div class="card-head-badges">
-            ${badge(subscriptionFormatLabel(subscription.default_format), 'indigo')}
-            ${enabled ? badge('已启用', 'green') : badge('已禁用')}
-          </div>
+  grid.innerHTML = `
+    <div class="subscription-single">
+      <div class="subscription-single-head">
+        <div>
+          <strong>默认订阅</strong>
+          <span class="hint">地址固定保存，页面刷新后仍可复制或扫码导入</span>
         </div>
-        <div class="subscription-body">
-          <div class="kv-grid">
-            <div class="kv">
-              <span class="kv-label">当前节点</span>
-              <span class="kv-value">${escapeHtml(subscription.node_count ?? 0)} 个入口</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">默认格式</span>
-              <span class="kv-value">${escapeHtml(subscriptionFormatLabel(subscription.default_format))}</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">过期时间</span>
-              <span class="kv-value">${escapeHtml(subscriptionExpiryLabel(subscription.expires_at))}</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">访问次数</span>
-              <span class="kv-value">${escapeHtml(subscription.access_count || 0)}</span>
-            </div>
-          </div>
-          <div class="subscription-meta-row">
-            <span>最近访问 ${escapeHtml(formatTime(subscription.last_access_at))}</span>
-            <span>创建于 ${escapeHtml(formatTime(subscription.created_at))}</span>
-          </div>
-          <div class="subscription-address-preview ${address ? '' : 'missing'}">
-            <i data-lucide="link"></i>
-            <span>${address ? escapeHtml(address) : '完整地址仅在创建或重新生成 Token 后显示'}</span>
-          </div>
+        <div class="card-head-badges">
+          ${badge(subscriptionFormatLabel(subscription.default_format), 'indigo')}
+          ${subscription.enabled ? badge('已启用', 'green') : badge('已禁用')}
         </div>
-        <div class="card-actions subscription-actions">
-          <button class="btn sm" data-sub-action="details" data-id="${escapeHtml(subscription.id)}" title="查看订阅详情"><i data-lucide="eye"></i>详情</button>
-          <button class="btn sm" data-sub-action="edit" data-id="${escapeHtml(subscription.id)}" title="编辑订阅设置"><i data-lucide="pencil"></i>编辑</button>
-          <button class="btn sm" data-sub-action="copy" data-id="${escapeHtml(subscription.id)}" title="复制 Base64 订阅地址" ${address ? '' : 'disabled'}><i data-lucide="copy"></i>复制地址</button>
-          <button class="btn sm" data-sub-action="toggle" data-id="${escapeHtml(subscription.id)}" title="${enabled ? '禁用订阅' : '启用订阅'}"><i data-lucide="${enabled ? 'pause' : 'play'}"></i>${enabled ? '禁用' : '启用'}</button>
-          <button class="btn sm danger" data-sub-action="rotate" data-id="${escapeHtml(subscription.id)}" title="重新生成 Token，旧地址立即失效"><i data-lucide="key-round"></i>重生成</button>
-          <button class="icon-btn" data-sub-action="delete" data-id="${escapeHtml(subscription.id)}" title="删除订阅，地址立即失效" aria-label="删除订阅"><i data-lucide="trash-2"></i></button>
-        </div>
-      </article>
-    `;
-  }).join('');
-  if (motion) animateCollection(grid, '.subscription-card');
+      </div>
+      <div class="subscription-single-stats">
+        <div><span>当前入口节点</span><strong>${escapeHtml(subscription.node_count ?? 0)} 个</strong></div>
+        <div><span>访问次数</span><strong>${escapeHtml(subscription.access_count || 0)} 次</strong></div>
+        <div><span>最近访问</span><strong>${escapeHtml(formatTime(subscription.last_access_at))}</strong></div>
+      </div>
+      <div class="subscription-addresses subscription-overview-addresses">
+        <div class="status-section-head"><span>订阅地址</span><span>自动包含所有已启用的入口节点</span></div>
+        ${subscriptionAddressRow(subscription.id, 'base64', '通用 Base64 地址')}
+        ${subscriptionAddressRow(subscription.id, 'uri', '原始 URI 地址')}
+      </div>
+    </div>
+  `;
+  refreshIcons();
+  if (motion) animateCollection(grid, '.subscription-single');
 }
 
 function formatDateTimeLocal(value) {
@@ -943,8 +915,8 @@ function openSubscriptionForm(subscription = null) {
 }
 
 function subscriptionAddressRow(subscriptionId, format, label) {
-  const token = state.subscriptionTokens[subscriptionId] || '';
-  const address = subscriptionAddress(token, format);
+  const subscription = state.subscriptions.find((entry) => entry.id === subscriptionId);
+  const address = subscriptionAddress(subscription, format);
   return `
     <div class="subscription-address-row">
       <div class="subscription-address-label">${escapeHtml(label)}</div>
@@ -1083,9 +1055,10 @@ function selectSubscriptionAddress(button) {
 }
 
 async function copySubscriptionAddress(subscriptionId, format = 'base64', button = null) {
-  const address = subscriptionAddress(state.subscriptionTokens[subscriptionId], format);
+  const subscription = state.subscriptions.find((entry) => entry.id === subscriptionId);
+  const address = subscriptionAddress(subscription, format);
   if (!address) {
-    toast('当前页面没有可复制的明文 Token，请先重新生成 Token', 'info');
+    toast('默认订阅地址暂不可用，请刷新页面重试', 'info');
     return;
   }
   if (await copyText(address)) {
@@ -1097,12 +1070,12 @@ async function copySubscriptionAddress(subscriptionId, format = 'base64', button
 }
 
 async function openSubscriptionQr(subscriptionId, format = 'base64') {
-  const token = state.subscriptionTokens[subscriptionId];
-  if (!token) {
-    toast('当前页面没有可生成二维码的明文 Token，请先重新生成 Token', 'info');
+  const subscription = state.subscriptions.find((entry) => entry.id === subscriptionId);
+  const address = subscriptionAddress(subscription, format);
+  if (!address) {
+    toast('默认订阅地址暂不可用，请刷新页面重试', 'info');
     return;
   }
-  const address = subscriptionAddress(token, format);
   const formatLabel = format === 'uri' ? '原始 URI 地址' : '通用 Base64 地址';
   setModal(`
     <div class="modal-backdrop">
@@ -2692,7 +2665,6 @@ function wireEvents() {
     });
   }
   $('#add-node-btn').addEventListener('click', () => openNodeModal());
-  $('#add-subscription-btn').addEventListener('click', () => openSubscriptionForm());
   $('#overview-go-nodes').addEventListener('click', () => {
     $$('.nav-item[data-view="nodes"]')[0].click();
   });

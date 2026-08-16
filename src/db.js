@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
+  token_ciphertext TEXT NOT NULL DEFAULT '',
   token_prefix TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,
   default_format TEXT NOT NULL DEFAULT 'base64',
@@ -136,6 +137,23 @@ if (!statusColumns.some((column) => column.name === 'xray_bin_present')) {
   db.exec('UPDATE server_status SET xray_bin_present = xray_installed');
 }
 db.exec('UPDATE server_status SET xray_bin_present = xray_installed WHERE xray_bin_present = 0 AND xray_installed = 1');
+
+const subscriptionColumns = db.prepare('PRAGMA table_info(subscriptions)').all();
+if (!subscriptionColumns.some((column) => column.name === 'token_ciphertext')) {
+  db.exec("ALTER TABLE subscriptions ADD COLUMN token_ciphertext TEXT NOT NULL DEFAULT ''");
+}
+db.exec('UPDATE subscriptions SET expires_at = NULL');
+const legacySubscriptions = db.prepare(`
+  SELECT id FROM subscriptions WHERE token_ciphertext = '' OR token_ciphertext IS NULL
+`).all();
+for (const row of legacySubscriptions) {
+  const token = createSubscriptionToken();
+  db.prepare(`
+    UPDATE subscriptions
+    SET token_hash = ?, token_prefix = ?, token_ciphertext = ?, updated_at = ?
+    WHERE id = ?
+  `).run(hashSubscriptionToken(token), subscriptionTokenPrefix(token), encryptText(token), new Date().toISOString(), row.id);
+}
 
 const now = () => new Date().toISOString();
 
@@ -409,11 +427,12 @@ export function deleteNode(id) {
 
 function publicSubscription(row, nodeCount = null) {
   if (!row) return null;
-  const { token_hash, ...safe } = row;
+  const { token_hash, token_ciphertext, ...safe } = row;
   const result = {
     ...safe,
     enabled: Boolean(row.enabled),
-    access_count: Number(row.access_count || 0)
+    access_count: Number(row.access_count || 0),
+    token_available: Boolean(token_ciphertext)
   };
   if (nodeCount !== null) result.node_count = Number(nodeCount || 0);
   return result;
@@ -430,14 +449,8 @@ function subscriptionNodeCount() {
 function normalizeSubscriptionInput(input = {}) {
   const name = String(input.name || '').trim();
   const defaultFormat = input.default_format === 'uri' ? 'uri' : 'base64';
-  const expiresAt = input.expires_at ? String(input.expires_at).trim() : null;
   if (!name) {
     const error = new Error('subscription name is required');
-    error.status = 400;
-    throw error;
-  }
-  if (expiresAt && !Number.isFinite(Date.parse(expiresAt))) {
-    const error = new Error('expires_at must be a valid date');
     error.status = 400;
     throw error;
   }
@@ -445,7 +458,7 @@ function normalizeSubscriptionInput(input = {}) {
     name,
     enabled: input.enabled === false || input.enabled === 0 ? 0 : 1,
     default_format: defaultFormat,
-    expires_at: expiresAt
+    expires_at: null
   };
 }
 
@@ -464,6 +477,32 @@ export function getSubscriptionRecord(id) {
   return db.prepare('SELECT * FROM subscriptions WHERE id = ?').get(id) || null;
 }
 
+export function getSubscriptionToken(id) {
+  const row = getSubscriptionRecord(id);
+  if (!row?.token_ciphertext) return '';
+  try {
+    return decryptText(row.token_ciphertext);
+  } catch {
+    return '';
+  }
+}
+
+export function getDefaultSubscriptionRecord() {
+  return db.prepare('SELECT * FROM subscriptions ORDER BY created_at ASC, id ASC LIMIT 1').get() || null;
+}
+
+export function getDefaultSubscription() {
+  return publicSubscription(getDefaultSubscriptionRecord(), subscriptionNodeCount());
+}
+
+export function ensureDefaultSubscription() {
+  const existing = getDefaultSubscriptionRecord();
+  if (existing) {
+    return { subscription: publicSubscription(existing, subscriptionNodeCount()), token: getSubscriptionToken(existing.id) };
+  }
+  return createSubscription({ name: '默认订阅', default_format: 'base64', enabled: true });
+}
+
 export function getSubscriptionByTokenHash(tokenHash) {
   return db.prepare('SELECT * FROM subscriptions WHERE token_hash = ?').get(tokenHash) || null;
 }
@@ -475,10 +514,10 @@ export function createSubscription(input = {}) {
   const timestamp = now();
   db.prepare(`
     INSERT INTO subscriptions
-      (id, name, token_hash, token_prefix, enabled, default_format, expires_at,
+      (id, name, token_hash, token_ciphertext, token_prefix, enabled, default_format, expires_at,
        last_access_at, access_count, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, data.name, hashSubscriptionToken(token), subscriptionTokenPrefix(token),
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, data.name, hashSubscriptionToken(token), encryptText(token), subscriptionTokenPrefix(token),
     data.enabled, data.default_format, data.expires_at, null, 0, timestamp, timestamp);
   return { subscription: getSubscription(id), token };
 }
@@ -500,9 +539,9 @@ export function rotateSubscription(id) {
   if (!existing) return null;
   const token = createSubscriptionToken();
   db.prepare(`
-    UPDATE subscriptions SET token_hash = ?, token_prefix = ?, updated_at = ?
+    UPDATE subscriptions SET token_hash = ?, token_ciphertext = ?, token_prefix = ?, updated_at = ?
     WHERE id = ?
-  `).run(hashSubscriptionToken(token), subscriptionTokenPrefix(token), now(), id);
+  `).run(hashSubscriptionToken(token), encryptText(token), subscriptionTokenPrefix(token), now(), id);
   return { subscription: getSubscription(id), token };
 }
 

@@ -21,8 +21,8 @@ import {
   listRepairLogs,
   createSubscription,
   deleteSubscription,
+  ensureDefaultSubscription,
   getSubscription,
-  listSubscriptions,
   rotateSubscription,
   saveNode,
   saveRoute,
@@ -95,10 +95,20 @@ function decorateRoute(route) {
 }
 
 function subscriptionWithToken(subscription, token) {
+  const paths = subscriptionPaths(subscription, token);
   return {
-    subscription,
+    subscription: paths,
     token,
-    subscription_path: `/sub/${token}`
+    subscription_path: paths.subscription_path,
+    subscription_uri_path: paths.subscription_uri_path
+  };
+}
+
+function subscriptionPaths(subscription, token = '') {
+  return {
+    ...subscription,
+    subscription_path: token ? `/sub/${token}` : '',
+    subscription_uri_path: token ? `/sub/${token}?format=uri` : ''
   };
 }
 
@@ -250,7 +260,8 @@ app.get('/api/repair-logs', (req, res) => {
 });
 
 app.get('/api/subscriptions', (req, res) => {
-  res.json(listSubscriptions());
+  const result = ensureDefaultSubscription();
+  res.json([subscriptionPaths(result.subscription, result.token)]);
 });
 
 app.post('/api/subscriptions', (req, res) => {
