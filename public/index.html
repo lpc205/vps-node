@@ -28,9 +28,6 @@
         <button class="nav-item" data-view="routes" title="路由">
           <i data-lucide="route"></i><span>路由</span>
         </button>
-        <button class="nav-item" data-view="subscriptions" title="订阅">
-          <i data-lucide="rss"></i><span>订阅</span>
-        </button>
       </nav>
       <div class="sidebar-foot">
         <span class="status-dot"></span>
@@ -87,6 +84,23 @@
             </button>
           </div>
           <div id="overview-nodes" class="overview-nodes"></div>
+        </div>
+        <div class="panel overview-subscriptions">
+          <div class="panel-head overview-subscriptions-head">
+            <div class="overview-panel-title">
+              <h2>订阅</h2>
+              <span class="hint">自动包含所有已启用的入口节点</span>
+            </div>
+            <button id="add-subscription-btn" class="btn primary sm" title="创建订阅">
+              <i data-lucide="plus"></i>
+              创建订阅
+            </button>
+          </div>
+          <div class="subscription-access-note">
+            <i data-lucide="info"></i>
+            <span>远程客户端需通过局域网、VPN 或 HTTPS 反向代理访问订阅地址。</span>
+          </div>
+          <div id="subscription-grid" class="subscription-grid"></div>
         </div>
       </section>
 
@@ -159,21 +173,6 @@
           </div>
           <div id="route-link-list" class="route-link-list"></div>
         </div>
-      </section>
-      <section id="view-subscriptions" class="view">
-        <div class="page-toolbar">
-          <div class="toolbar-copy subscription-toolbar-copy">
-            <span>订阅将自动包含所有已启用的入口节点</span>
-            <span class="hint">远程客户端需通过局域网、VPN 或 HTTPS 反向代理访问</span>
-          </div>
-          <div class="toolbar-actions">
-            <button id="add-subscription-btn" class="btn primary" title="创建订阅">
-              <i data-lucide="plus"></i>
-              创建订阅
-            </button>
-          </div>
-        </div>
-        <div id="subscription-grid" class="subscription-grid"></div>
       </section>
     </main>
   </div>

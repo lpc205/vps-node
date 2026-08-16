@@ -1928,15 +1928,50 @@ textarea:focus-visible {
   flex-basis: 100%;
 }
 
-.subscription-toolbar-copy {
+.overview-subscriptions {
+  margin-top: 16px;
+}
+
+.overview-subscriptions-head {
+  min-height: 64px;
+}
+
+.overview-panel-title {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+.overview-panel-title h2 {
+  line-height: 1.2;
+}
+
+.subscription-access-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 18px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.subscription-access-note svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--primary);
 }
 
 .subscription-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 14px;
+  padding: 14px 18px 18px;
 }
 
 .subscription-card {
@@ -2149,8 +2184,20 @@ textarea:focus-visible {
 }
 
 @media (max-width: 860px) {
+  .overview-subscriptions-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .overview-subscriptions-head .btn {
+    margin-left: auto;
+  }
+
   .subscription-grid {
     grid-template-columns: 1fr;
+    padding: 12px;
   }
 
   .subscription-address-row {

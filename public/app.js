@@ -549,7 +549,6 @@ function renderAll({ motion = true } = {}) {
   renderServers({ motion });
   renderNodes({ motion });
   renderRoutes({ motion });
-  renderSubscriptions({ motion });
   refreshIcons();
 }
 
@@ -575,6 +574,7 @@ function renderOverview({ motion = true } = {}) {
       }).join('')
     : emptyState('还没有节点，先添加服务器和节点', { icon: 'network', action: 'go-servers', actionLabel: '添加服务器' });
   if (motion) animateCollection(overview, '.overview-row, .empty-state');
+  renderSubscriptions({ motion });
 }
 
 function renderServers({ motion = true } = {}) {
@@ -2498,8 +2498,7 @@ function wireEvents() {
         overview: ['总览', 'SSH 远程节点管理'],
         servers: ['服务器', 'SSH 连接与远程部署'],
         nodes: ['节点', 'Xray 入站配置'],
-        routes: ['路由', '入站与出站链路'],
-        subscriptions: ['订阅', '自动同步启用的入口节点']
+        routes: ['路由', '入站与出站链路']
       };
       const [title, subtitle] = titles[item.dataset.view];
       setPage(title, subtitle);
