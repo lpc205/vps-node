@@ -2435,6 +2435,11 @@ textarea:focus-visible {
   color: var(--muted);
 }
 
+.subscription-qr-loading[hidden],
+.subscription-qr-image[hidden] {
+  display: none;
+}
+
 .subscription-qr-loading svg {
   width: 18px;
   height: 18px;
