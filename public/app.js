@@ -557,6 +557,10 @@ function renderOverview({ motion = true } = {}) {
   animateNumber($('#metric-nodes'), state.stats.nodes || 0);
   animateNumber($('#metric-enabled'), state.stats.enabledNodes || 0);
 
+  const attentionStates = new Set(['offline', 'service_stopped', 'config_mismatch', 'config_missing', 'binary_missing', 'ports_down']);
+  const attentionCount = state.servers.filter((server) => attentionStates.has(state.statuses[server.id]?.state)).length;
+  animateNumber(document.querySelector('#metric-attention'), attentionCount);
+
   const recent = state.nodes.slice(0, 6);
   const overview = $('#overview-nodes');
   overview.innerHTML = recent.length

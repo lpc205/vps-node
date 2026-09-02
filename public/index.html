@@ -13,7 +13,7 @@
     <aside class="sidebar">
       <div class="brand">
         <span class="brand-icon"><i data-lucide="server-cog"></i></span>
-        <span>VPS Console</span>
+        <span class="brand-copy"><strong>VPS Console</strong><small>CONTROL PLANE</small></span>
       </div>
       <nav class="nav">
         <button class="nav-item active" data-view="overview" title="总览">
@@ -74,15 +74,23 @@
               <strong id="metric-enabled">0</strong>
             </div>
           </div>
+          <div class="metric metric-attention">
+            <span class="metric-icon red"><i data-lucide="shield-alert"></i></span>
+            <div>
+              <span class="metric-label">需处理</span>
+              <strong id="metric-attention">0</strong>
+            </div>
+          </div>
         </div>
         <div class="panel">
           <div class="panel-head">
-            <h2>最近节点</h2>
+            <div class="panel-title-stack"><h2>最近节点</h2><span>最近创建或更新的连接入口</span></div>
             <button id="overview-go-nodes" class="btn ghost sm" title="前往节点页">
               <i data-lucide="arrow-right"></i>
               查看节点
             </button>
           </div>
+          <div class="overview-table-head" aria-hidden="true"><span>节点</span><span>所属服务器</span><span>协议 / 端口</span><span>状态</span></div>
           <div id="overview-nodes" class="overview-nodes"></div>
         </div>
         <div class="panel overview-subscriptions">
