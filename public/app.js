@@ -2533,10 +2533,11 @@ async function runServerAction(action, serverId, button) {
       openConfirmModal({
         title: '删除服务器',
         message: [
-          `将删除「${server?.name || ''}」的本地配置，以及该服务器下的全部节点和路由。`,
-          '不会影响 VPS 上已运行的服务。'
+          '将通过 SSH 停止并卸载「' + (server?.name || '') + '」上的 Xray 服务、配置和面板安装的二进制文件。',
+          '同时删除面板中的服务器配置、节点和路由。此操作不可撤销。',
+          '如果 SSH 连接或卸载失败，面板配置不会被删除。'
         ],
-        confirmText: '删除',
+        confirmText: '卸载并删除',
         onConfirm: async () => {
           await withBusy(button, '删除中...', async () => {
             try {

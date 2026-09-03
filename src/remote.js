@@ -241,6 +241,37 @@ echo "XRAY_RESTARTED=ok"
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
 
+const UNINSTALL_SCRIPT = `
+set +e
+
+# Remove only the Xray installation managed by this panel.
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop xray >/dev/null 2>&1 || true
+  systemctl disable xray >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/xray.service
+  systemctl daemon-reload >/dev/null 2>&1 || true
+elif command -v rc-service >/dev/null 2>&1; then
+  rc-service xray stop >/dev/null 2>&1 || true
+  rc-update del xray default >/dev/null 2>&1 || true
+  rm -f /etc/init.d/xray
+elif command -v pkill >/dev/null 2>&1; then
+  pkill -f 'xray run -config' >/dev/null 2>&1 || true
+fi
+
+rm -f /usr/local/bin/xray
+rm -f /etc/xray/config.json
+rm -f /usr/local/etc/xray/config.json
+rmdir /etc/xray >/dev/null 2>&1 || true
+rmdir /usr/local/etc/xray >/dev/null 2>&1 || true
+rm -f /var/log/xray.log
+echo "XRAY_UNINSTALLED=ok"
+`;
+
+export async function uninstallXray(server) {
+  const result = await runChecked(runSudo(server, UNINSTALL_SCRIPT, { timeout: 60000 }));
+  return { ok: true, stdout: result.stdout, stderr: result.stderr };
+}
+
 const STATUS_SCRIPT = `
 set +e
 if command -v xray >/dev/null 2>&1 || [ -x /usr/local/bin/xray ]; then

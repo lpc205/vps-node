@@ -30,7 +30,7 @@ import {
   setSubscriptionEnabled,
   updateSubscription
 } from './db.js';
-import { deployServer, installXray, probeServer, restartXray, xrayLogs, xrayStatus } from './remote.js';
+import { deployServer, installXray, probeServer, restartXray, uninstallXray, xrayLogs, xrayStatus } from './remote.js';
 import { deriveServerState, getStatusIntervalSeconds } from './status.js';
 import { deriveDriftType } from './status.js';
 import { performRepair, routesForServer } from './repair.js';
@@ -194,12 +194,15 @@ app.put('/api/servers/:id', (req, res) => {
   res.json(saveServer(req.body || {}, req.params.id));
 });
 
-app.delete('/api/servers/:id', (req, res) => {
-  if (!deleteServer(req.params.id)) {
+app.delete('/api/servers/:id', asyncHandler(async (req, res) => {
+  const server = getServerRecord(req.params.id);
+  if (!server) {
     return res.status(404).json({ error: 'server not found' });
   }
+  await uninstallXray(server);
+  deleteServer(req.params.id);
   res.status(204).end();
-});
+}));
 
 app.post('/api/servers/:id/test', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);
