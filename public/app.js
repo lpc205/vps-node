@@ -561,6 +561,25 @@ function renderOverview({ motion = true } = {}) {
   const attentionCount = state.servers.filter((server) => attentionStates.has(state.statuses[server.id]?.state)).length;
   animateNumber(document.querySelector('#metric-attention'), attentionCount);
 
+  const attention = state.servers
+    .map((server) => ({ server, live: state.statuses[server.id] }))
+    .filter(({ live }) => live && attentionStates.has(live.state));
+  const attentionPanel = $('#overview-attention');
+  attentionPanel.hidden = attention.length === 0;
+  attentionPanel.innerHTML = attention.length ? `
+    <div class="panel-head">
+      <div class="panel-title-stack"><h2>需要处理</h2><span>优先显示离线、停止或配置漂移的服务器</span></div>
+      <span class="badge red">${attention.length} 台</span>
+    </div>
+    <div class="attention-list">${attention.map(({ server, live }) => `
+      <div class="attention-row">
+        <span class="name">${statusDot(live.state)}${escapeHtml(server.name)}</span>
+        <span class="muted">${escapeHtml(live.drift_reason || statusMeta(live.state).label)}</span>
+        <button class="btn sm danger" data-overview-status="${escapeHtml(server.id)}" title="查看实时状态"><i data-lucide="activity"></i>查看状态</button>
+      </div>
+    `).join('')}</div>
+  ` : '';
+
   const recent = state.nodes.slice(0, 6);
   const overview = $('#overview-nodes');
   overview.innerHTML = recent.length
@@ -578,6 +597,7 @@ function renderOverview({ motion = true } = {}) {
       }).join('')
     : emptyState('还没有节点，先添加服务器和节点', { icon: 'network', action: 'go-servers', actionLabel: '添加服务器' });
   if (motion) animateCollection(overview, '.overview-row, .empty-state');
+  if (motion && attention.length) animateCollection(attentionPanel, '.attention-row');
   renderSubscriptions({ motion });
 }
 
@@ -2733,6 +2753,11 @@ function wireEvents() {
     const button = event.target.closest('[data-remove-route]');
     if (!button) return;
     removeRoute(button.dataset.removeRoute, button);
+  });
+
+  $('#overview-attention').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-overview-status]');
+    if (button) checkServerStatus(button.dataset.overviewStatus);
   });
 
   $('#overview-nodes').addEventListener('click', (event) => {
