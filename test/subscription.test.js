@@ -219,3 +219,33 @@ test('deleting a subscription invalidates its address and empty subscriptions st
   assert.equal((await request(`/api/subscriptions/${created.body.subscription.id}`, { method: 'DELETE' })).response.status, 204);
   assert.equal((await request(`/sub/${token}`)).response.status, 404);
 });
+
+test('deleting a server fails if remote uninstall fails, but allows force deletion', async () => {
+  const serverRes = await request('/api/servers', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: '离线服务器',
+      host: '127.0.0.1',
+      port: 59999, // 不可达端口
+      username: 'root',
+      auth_type: 'password',
+      password: 'dummy'
+    })
+  });
+  const sid = serverRes.body.id;
+  assert.ok(sid);
+
+  // 正常尝试删除，应该因为 SSH 连接不上而返回 400，并提示 can_force
+  const failedDelete = await request(`/api/servers/${sid}`, { method: 'DELETE' });
+  assert.equal(failedDelete.response.status, 400);
+  assert.equal(failedDelete.body.can_force, true);
+  assert.match(failedDelete.body.error, /远程卸载失败/);
+
+  // 加上 force=true 强制删除面板配置
+  const forceDelete = await request(`/api/servers/${sid}?force=true`, { method: 'DELETE' });
+  assert.equal(forceDelete.response.status, 204);
+
+  // 再次获取应为 404
+  const checkAgain = await request(`/api/servers/${sid}/status`);
+  assert.equal(checkAgain.response.status, 404);
+});

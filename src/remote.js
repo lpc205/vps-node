@@ -405,8 +405,8 @@ export function classifySshError(error) {
   if (/EHOSTUNREACH|ENETUNREACH|No route to host/i.test(message)) {
     return '服务器不可达：请检查网络或防火墙';
   }
-  if (/ECONNRESET|socket hang up|Connection reset/i.test(message)) {
-    return 'SSH 连接中断：服务器可能关闭了连接';
+  if (/ECONNRESET|socket hang up|Connection reset|Connection lost before handshake/i.test(message)) {
+    return 'SSH 连接中断：服务器在握手前关闭了连接或端口不正确';
   }
   if (/sudo password is required/i.test(message)) {
     return '缺少 sudo 密码：该服务器需要 sudo 权限';

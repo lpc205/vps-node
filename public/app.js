@@ -222,7 +222,10 @@ async function api(path, options = {}) {
     } catch {
       payload = { error: response.statusText };
     }
-    throw new Error(payload.error || `request failed (${response.status})`);
+    const err = new Error(payload.error || `request failed (${response.status})`);
+    err.payload = payload;
+    err.status = response.status;
+    throw err;
   }
   if (response.status === 204) return null;
   return response.json();
@@ -2554,8 +2557,7 @@ async function runServerAction(action, serverId, button) {
         title: '删除服务器',
         message: [
           '将通过 SSH 停止并卸载「' + (server?.name || '') + '」上的 Xray 服务、配置和面板安装的二进制文件。',
-          '同时删除面板中的服务器配置、节点和路由。此操作不可撤销。',
-          '如果 SSH 连接或卸载失败，面板配置不会被删除。'
+          '同时删除面板中的服务器配置、节点和路由。此操作不可撤销。'
         ],
         confirmText: '卸载并删除',
         onConfirm: async () => {
@@ -2565,7 +2567,30 @@ async function runServerAction(action, serverId, button) {
               toast('服务器已删除', 'success');
               await loadAll();
             } catch (error) {
-              toast(error.message, 'error');
+              if (error.payload?.can_force) {
+                openConfirmModal({
+                  title: '远程卸载失败',
+                  message: [
+                    error.message,
+                    '无法通过 SSH 连接到服务器进行清理。',
+                    '是否仅从面板中强制删除该服务器及其节点/路由？（VPS 上的服务将保留不做处理）'
+                  ],
+                  confirmText: '强制仅删除面板记录',
+                  onConfirm: async () => {
+                    await withBusy(button, '删除中...', async () => {
+                      try {
+                        await api(`/api/servers/${serverId}?force=true`, { method: 'DELETE' });
+                        toast('服务器已从面板中删除', 'success');
+                        await loadAll();
+                      } catch (forceErr) {
+                        toast(forceErr.message, 'error');
+                      }
+                    });
+                  }
+                });
+              } else {
+                toast(error.message, 'error');
+              }
             }
           });
         }

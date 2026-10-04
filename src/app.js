@@ -30,7 +30,16 @@ import {
   setSubscriptionEnabled,
   updateSubscription
 } from './db.js';
-import { deployServer, installXray, probeServer, restartXray, uninstallXray, xrayLogs, xrayStatus } from './remote.js';
+import {
+  classifySshError,
+  deployServer,
+  installXray,
+  probeServer,
+  restartXray,
+  uninstallXray,
+  xrayLogs,
+  xrayStatus
+} from './remote.js';
 import { deriveServerState, getStatusIntervalSeconds } from './status.js';
 import { deriveDriftType } from './status.js';
 import { performRepair, routesForServer } from './repair.js';
@@ -199,7 +208,19 @@ app.delete('/api/servers/:id', asyncHandler(async (req, res) => {
   if (!server) {
     return res.status(404).json({ error: 'server not found' });
   }
-  await uninstallXray(server);
+  const force = req.query.force === 'true' || req.query.force === '1' || req.body?.force === true;
+  if (!force) {
+    try {
+      await uninstallXray(server);
+    } catch (err) {
+      const classified = classifySshError(err);
+      return res.status(400).json({
+        error: `远程卸载失败（${classified}）`,
+        can_force: true,
+        details: err.message
+      });
+    }
+  }
   deleteServer(req.params.id);
   res.status(204).end();
 }));
@@ -429,6 +450,9 @@ app.use((err, req, res, next) => {
   console.error(`[api-error] ${req.method} ${loggedUrl} server=${req.params.id || '-'} ${err.message}`);
   if (err.message?.includes('All configured authentication methods failed')) {
     payload.error = 'SSH 认证失败：请检查用户名、密码或私钥';
+  }
+  if (err.message?.includes('Connection lost before handshake')) {
+    payload.error = 'SSH 连接中断：服务器在握手前关闭了连接或端口不正确';
   }
   if (err.remote) payload.remote = err.remote;
   res.status(status).json(payload);

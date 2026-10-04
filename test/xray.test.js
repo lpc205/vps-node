@@ -384,6 +384,7 @@ test('classifySshError distinguishes auth and timeout failures', () => {
   assert.match(classifySshError(new Error('All configured authentication methods failed')), /认证失败/);
   assert.match(classifySshError(new Error('SSH command timed out after 20000ms')), /超时/);
   assert.match(classifySshError(new Error('connect ECONNREFUSED 1.2.3.4:22')), /拒绝/);
+  assert.match(classifySshError(new Error('Connection lost before handshake')), /握手前关闭了连接/);
 });
 
 test('reality is restricted to vless on non-ws transports', () => {
