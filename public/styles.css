@@ -1666,6 +1666,76 @@ textarea:focus-visible {
   animation: spin 0.9s linear infinite;
 }
 
+.deploy-progress-bar {
+  height: 6px;
+  margin-bottom: 14px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.deploy-progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.deploy-progress-list {
+  display: grid;
+  gap: 8px;
+}
+
+.deploy-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.deploy-step-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+}
+
+.deploy-step-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.deploy-step.running {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.deploy-step.running .deploy-step-icon {
+  color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+.deploy-step.done {
+  color: var(--text);
+}
+
+.deploy-step.done .deploy-step-icon {
+  color: var(--green);
+}
+
+.deploy-step.error {
+  border-color: var(--red);
+  color: var(--text);
+}
+
+.deploy-step.error .deploy-step-icon {
+  color: var(--red);
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

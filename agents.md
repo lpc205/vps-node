@@ -220,7 +220,7 @@ docker-compose.fnos.yml  飞牛 NAS host 网络部署配置（NAS 目录中维�
    - 隧道类组合自动勾选“通过 Argo 隧道对外”；自签类组合自动使用面板生成的自签证书；Reality 类组合显示伪装站点、目标、密钥对等字段。
 3. 每个节点固定一个默认客户端，客户端 secret（UUID / 密码）在保存时自动生成，编辑节点时保持不变。
 4. 点击“部署全部节点”：调用 `/api/servers/:id/deploy`，流程为安装 Xray → 写入 config → 重启 → 查询状态。
-5. 部署期间显示进度弹窗，完成后显示结果弹窗。
+5. 部署期间显示带步骤清单的进度弹窗：前端调用 `POST /api/servers/:id/deploy?async=1` 拿到任务 ID，再按 800ms 轮询 `GET /api/deploy-jobs/:jobId`，逐步点亮“生成自签证书 / 安装 Xray / 写入配置 / 重启服务 / Nginx 反代 / cloudflared / 隧道域名 / 检查结果”；完成后弹结果弹窗，失败时把出错步骤标红并提示原因。
 
 ### Argo 隧道部署（WS / XHTTP）
 
@@ -295,7 +295,8 @@ docker-compose.fnos.yml  飞牛 NAS host 网络部署配置（NAS 目录中维�
 - `POST /api/servers/:id/install`
 - `POST /api/servers/:id/restart`
 - `POST /api/servers/:id/x25519`：本地生成 Reality 密钥对
-- `POST /api/servers/:id/deploy`：安装 + 配置 + 重启 + 状态
+- `POST /api/servers/:id/deploy`：安装 + 配置 + 重启 + 状态；带 `?async=1` 时返回 `202` 与 `{ job_id, steps }`，用于前端进度轮询
+- `GET /api/deploy-jobs/:jobId`：查询异步部署任务的状态、各步骤进度、错误与结果（任务在内存中保留 30 分钟）
 - `GET /api/servers/:id/logs?lines=N`
 - `GET /api/servers/:id/nodes`
 - `POST /api/servers/:id/nodes`

@@ -571,14 +571,21 @@ fi
 export async function deployServer(server, nodes, options = {}) {
   const routes = options.routes || [];
   const enabledNodes = nodes.filter((node) => node.enabled !== 0 && node.enabled !== false);
+  const report = typeof options.onProgress === 'function' ? options.onProgress : () => {};
+  const step = async (id, task) => {
+    report(id, 'running');
+    const result = await task();
+    report(id, 'done');
+    return result;
+  };
 
   if (needsSelfSignedCert(enabledNodes)) {
     const sni = enabledNodes.find((node) => node.self_signed === 1 || node.protocol === 'hysteria2')?.sni || 'localhost';
-    await runChecked(runSudo(server, buildCertificateScript(undefined, undefined, sni), { timeout: 60000 }));
+    await step('certificate', () => runChecked(runSudo(server, buildCertificateScript(undefined, undefined, sni), { timeout: 60000 })));
   }
-  await installXray(server, options);
-  await writeXrayConfig(server, nodes, routes);
-  const restart = await restartXray(server);
+  await step('install-xray', () => installXray(server, options));
+  await step('write-config', () => writeXrayConfig(server, nodes, routes));
+  const restart = await step('restart-xray', () => restartXray(server));
 
   let tunnel = null;
   if (tunnelRequired(server, enabledNodes)) {
@@ -589,6 +596,6 @@ export async function deployServer(server, nodes, options = {}) {
     }
   }
 
-  const status = await xrayStatus(server, nodes);
+  const status = await step('status', () => xrayStatus(server, nodes));
   return { ok: true, restart, tunnel, status };
 }

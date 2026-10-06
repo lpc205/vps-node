@@ -1764,13 +1764,10 @@ function openNodeModal(serverId, node = null) {
       closeModal();
       await loadAll();
       if (deploy) {
-        openProgressModal('保存并部署', '正在部署服务器...');
         try {
-          const result = await api(`/api/servers/${targetServerId}/deploy`, { method: 'POST' });
-          closeProgressModal();
+          const result = await deployServerWithProgress(targetServerId, '保存并部署');
           openResultModal('部署结果', result.restart?.stdout + '\n' + result.status?.listening || 'ok');
         } catch (error) {
-          closeProgressModal();
           toast(error.message, 'error');
         } finally {
           await loadAll();
@@ -1877,7 +1874,84 @@ function updateProgress(message) {
 }
 
 function closeProgressModal() {
-  if ($('#progress-text')) closeModal();
+  if ($('#progress-text') || $('#deploy-progress-list')) closeModal();
+}
+
+function openDeployProgressModal(title, steps) {
+  setModal(`
+    <div class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>${escapeHtml(title)}</h2>
+        </div>
+        <div class="modal-body">
+          <div class="deploy-progress-bar"><span id="deploy-progress-fill" style="width:0%"></span></div>
+          <div class="deploy-progress-list" id="deploy-progress-list">
+            ${(steps || []).map((step) => `
+              <div class="deploy-step" data-step="${escapeHtml(step.id)}">
+                <span class="deploy-step-icon"><i data-lucide="circle"></i></span>
+                <span class="deploy-step-label">${escapeHtml(step.label)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+  refreshIcons();
+}
+
+function updateDeployProgressModal(job) {
+  const list = $('#deploy-progress-list');
+  if (!list) return;
+  for (const step of job.steps || []) {
+    const element = list.querySelector(`[data-step="${step.id}"]`);
+    if (!element) continue;
+    element.classList.toggle('running', step.state === 'running');
+    element.classList.toggle('done', step.state === 'done');
+    element.classList.toggle('error', step.state === 'error');
+    const icon = element.querySelector('.deploy-step-icon');
+    if (icon) {
+      const name = step.state === 'done'
+        ? 'circle-check'
+        : step.state === 'error'
+          ? 'circle-alert'
+          : step.state === 'running'
+            ? 'loader-circle'
+            : 'circle';
+      icon.innerHTML = `<i data-lucide="${name}"></i>`;
+    }
+  }
+  const steps = job.steps || [];
+  const done = steps.filter((step) => step.state === 'done').length;
+  const fill = $('#deploy-progress-fill');
+  if (fill) fill.style.width = `${steps.length ? Math.round((done / steps.length) * 100) : 0}%`;
+  refreshIcons();
+}
+
+async function deployServerWithProgress(serverId, title = '部署节点') {
+  const started = await api(`/api/servers/${serverId}/deploy?async=1`, { method: 'POST' });
+  openDeployProgressModal(title, started.steps || []);
+  const deadline = Date.now() + 10 * 60 * 1000;
+  try {
+    for (;;) {
+      if (Date.now() > deadline) throw new Error('部署超时，请稍后在服务器上查看状态');
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const job = await api(`/api/deploy-jobs/${started.job_id}`);
+      updateDeployProgressModal(job);
+      if (job.status === 'done') {
+        closeProgressModal();
+        return job.result || {};
+      }
+      if (job.status === 'error') {
+        closeProgressModal();
+        throw new Error(job.error || job.details || '部署失败');
+      }
+    }
+  } catch (error) {
+    closeProgressModal();
+    throw error;
+  }
 }
 
 async function createSelectedRoute() {
@@ -1906,12 +1980,11 @@ async function createSelectedRoute() {
       const outboundActive = ['active', 'started'].includes(outboundStatus?.xray?.active);
       if (!outboundActive) {
         updateProgress('正在部署出站服务器...');
-        await api(`/api/servers/${outboundNode.server_id}/deploy`, { method: 'POST' });
+        await deployServerWithProgress(outboundNode.server_id, '连接路由 · 部署出站');
       }
     }
     updateProgress('正在部署入站服务器...');
-    const result = await api(`/api/servers/${inboundNode.server_id}/deploy`, { method: 'POST' });
-    closeProgressModal();
+    const result = await deployServerWithProgress(inboundNode.server_id, '连接路由 · 部署入站');
     openResultModal('路由已连接', result.restart?.stdout + '\n' + result.status?.listening || '完成');
     state.selectedInboundId = null;
     state.selectedOutboundId = null;
@@ -1969,8 +2042,7 @@ async function runDisconnect(routeId, inboundNode) {
   try {
     await api('/api/routes/' + routeId, { method: 'DELETE' });
     updateProgress('正在重新部署入站服务器...');
-    const result = await api(`/api/servers/${inboundNode.server_id}/deploy`, { method: 'POST' });
-    closeProgressModal();
+    const result = await deployServerWithProgress(inboundNode.server_id, '断开路由');
     openResultModal('路由已断开', result.restart?.stdout + '\n' + result.status?.listening || '完成');
     await loadAll();
   } catch (error) {
@@ -2558,14 +2630,11 @@ async function deployServerNodes(serverId, button) {
   const server = state.servers.find((item) => item.id === serverId);
   if (!server) return;
   await withBusy(button, '部署中...', async () => {
-    openProgressModal('部署节点', `正在部署「${server.name}」的全部节点...`);
     try {
-      const result = await api(`/api/servers/${serverId}/deploy`, { method: 'POST' });
-      closeProgressModal();
+      const result = await deployServerWithProgress(serverId, `部署节点 · ${server.name}`);
       openResultModal('部署结果', result.restart?.stdout + '\n' + result.status?.listening || '完成');
       await loadAll();
     } catch (error) {
-      closeProgressModal();
       toast(error.message, 'error');
       await loadAll();
     }

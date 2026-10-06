@@ -1,5 +1,6 @@
 import express from 'express';
 import QRCode from 'qrcode';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +46,7 @@ import { deriveServerState, getStatusIntervalSeconds } from './status.js';
 import { deriveDriftType } from './status.js';
 import { performRepair, routesForServer } from './repair.js';
 import { generateRealityKeypair, nodeLinks } from './xray.js';
-import { uninstallTunnel } from './argo.js';
+import { needsSelfSignedCert, tunnelRequired, uninstallTunnel } from './argo.js';
 import {
   buildSubscriptionNodes,
   isSubscriptionExpired,
@@ -65,6 +66,81 @@ const DRIFT_REASONS = {
   binary_missing: '/usr/local/bin/xray 不存在',
   tunnel_down: 'Argo 隧道（cloudflared）未运行或未安装'
 };
+
+const DEPLOY_STEP_LABELS = {
+  certificate: '生成自签证书',
+  'install-xray': '安装 / 检查 Xray',
+  'write-config': '写入 Xray 配置',
+  'restart-xray': '重启 Xray 服务',
+  nginx: '安装并配置 Nginx 反代',
+  cloudflared: '安装并启动 cloudflared',
+  'tunnel-domain': '获取临时隧道域名',
+  status: '检查部署结果'
+};
+
+const deployJobs = new Map();
+
+function deployStepPlan(nodes) {
+  const enabled = nodes.filter((node) => node.enabled !== 0 && node.enabled !== false);
+  const ids = [];
+  if (needsSelfSignedCert(enabled)) ids.push('certificate');
+  ids.push('install-xray', 'write-config', 'restart-xray');
+  if (tunnelRequired(null, enabled)) ids.push('nginx', 'cloudflared', 'tunnel-domain');
+  ids.push('status');
+  return ids.map((id) => ({ id, label: DEPLOY_STEP_LABELS[id], state: 'pending' }));
+}
+
+function deployErrorMessage(error) {
+  const message = error?.message || String(error);
+  if (error?.status) return message;
+  return classifySshError(error);
+}
+
+function startDeployJob(server, nodes, routes) {
+  const id = randomUUID();
+  const job = {
+    id,
+    status: 'running',
+    current: '',
+    steps: deployStepPlan(nodes),
+    error: '',
+    details: '',
+    result: null,
+    started_at: new Date().toISOString(),
+    finished_at: ''
+  };
+  deployJobs.set(id, job);
+
+  const onProgress = (stepId, state) => {
+    const step = job.steps.find((item) => item.id === stepId);
+    if (!step) return;
+    step.state = state;
+    if (state === 'running') job.current = stepId;
+    if (state === 'done' && job.current === stepId) job.current = '';
+  };
+
+  deployServer(server, nodes, { routes, onProgress })
+    .then((result) => {
+      job.status = 'done';
+      job.result = result;
+      job.current = '';
+    })
+    .catch((error) => {
+      job.status = 'error';
+      job.error = deployErrorMessage(error);
+      job.details = error?.message || String(error);
+      job.steps.forEach((step) => {
+        if (step.state === 'running') step.state = 'error';
+      });
+    })
+    .finally(() => {
+      job.finished_at = new Date().toISOString();
+      const timer = setTimeout(() => deployJobs.delete(id), 30 * 60 * 1000);
+      if (timer.unref) timer.unref();
+    });
+
+  return job;
+}
 const publicDir = join(here, '..', 'public');
 const lucidePath = join(here, '..', 'node_modules', 'lucide', 'dist', 'umd', 'lucide.js');
 const lucideMinPath = join(here, '..', 'node_modules', 'lucide', 'dist', 'umd', 'lucide.min.js');
@@ -270,8 +346,29 @@ app.post('/api/servers/:id/deploy', asyncHandler(async (req, res) => {
   prepareNodesForDeploy(nodes, generateRealityKeypair);
   nodes = listNodes(req.params.id);
   const routes = routesForServer(req.params.id);
+  const asyncMode = req.query.async === '1' || req.query.async === 'true' || req.body?.async === true;
+  if (asyncMode) {
+    const job = startDeployJob(server, nodes, routes);
+    return res.status(202).json({ job_id: job.id, steps: job.steps });
+  }
   res.json(await deployServer(server, nodes, { routes }));
 }));
+
+app.get('/api/deploy-jobs/:jobId', (req, res) => {
+  const job = deployJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'deploy job not found' });
+  res.json({
+    id: job.id,
+    status: job.status,
+    current: job.current,
+    steps: job.steps,
+    error: job.error,
+    details: job.details,
+    result: job.status === 'done' ? job.result : null,
+    started_at: job.started_at,
+    finished_at: job.finished_at
+  });
+});
 
 app.post('/api/servers/:id/repair', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);

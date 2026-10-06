@@ -368,13 +368,19 @@ export async function deployTunnel(server, nodes, options = {}) {
   const tunnelNodeList = tunnelNodes(nodes);
   if (tunnelNodeList.length === 0) return { ok: true, skipped: true };
 
+  const report = typeof options.onProgress === 'function' ? options.onProgress : () => {};
   const outputs = {};
+  report('nginx', 'running');
   const nginx = await runChecked(runSudo(server, buildNginxInstallScript(server, nodes), { timeout: 180000 }));
   outputs.nginx = nginx.stdout.trim();
+  report('nginx', 'done');
 
+  report('cloudflared', 'running');
   const cloudflared = await runChecked(runSudo(server, buildCloudflaredInstallScript(server, nodes), { timeout: 240000 }));
   outputs.cloudflared = cloudflared.stdout.trim();
+  report('cloudflared', 'done');
 
+  report('tunnel-domain', 'running');
   const quick = await runChecked(runSudo(server, buildQuickTunnelDomainScript(server), { timeout: 90000 }));
   const match = quick.stdout.match(/^ARGO_DOMAIN=(.*)$/m);
   if (!match || !match[1]) {
@@ -383,6 +389,7 @@ export async function deployTunnel(server, nodes, options = {}) {
     throw error;
   }
   outputs.argo_domain = match[1].trim();
+  report('tunnel-domain', 'done');
 
   return { ok: true, ...outputs };
 }
