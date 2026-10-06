@@ -61,6 +61,7 @@ NAS 更新注意事项：
 19. 发布同步：项目当前默认在完成修改后提交并推送 GitHub `main`，再使用飞牛 NAS 的离线 Docker 配置重建并检查健康状态。
 20. Argo 隧道部署：接入 ArgoX 的部署思路，节点可标记为“隧道模式”，WS / XHTTP 入站只监听 `127.0.0.1`，由面板安装托管的 nginx 反代到 Xray，再由 cloudflared 建立 Argo 隧道（临时 / Token / JSON 三种模式），TLS 由 Cloudflare 边缘终结，不需要域名证书。
 21. 协议扩展：新增 `xhttp` 传输（CDN / Reality H2）与 `hysteria2` 协议（UDP + 自签证书），并支持面板在服务器上自动生成 100 年自签证书。
+22. 节点客户端简化：节点表单取消多客户端编辑 / 导入 / 批量生成，每个节点固定一个默认客户端，UUID / 密码在保存时自动生成，编辑节点不会轮换已有凭据。
 
 ## 当前页面与入口
 
@@ -150,7 +151,7 @@ docker-compose.fnos.yml  飞牛 NAS host 网络部署配置（NAS 目录中维�
 - `sni / path / cert_file / key_file / dest / server_names / private_key / public_key / short_ids`
 - `method`：Shadowsocks 加密方式，如 `aes-256-gcm`、`chacha20-ietf-poly1305`、`2022-blake3-aes-256-gcm`
 - `ss_network`：Shadowsocks 网络，`tcp / udp / tcp,udp`
-- `clients_json`：客户端数组，`email / secret / flow / security`（`security` 用于 VMess，如 `auto`、`aes-128-gcm`、`chacha20-poly1305`）
+- `clients_json`：固定包含一个默认客户端，`email / secret / flow / security`（`security` 用于 VMess，如 `auto`、`aes-128-gcm`、`chacha20-poly1305`）；表单不提供多客户端编辑，保存时自动生成，编辑时保留原值
 - `enabled`：`1/0`
 - `tunnel`：`1/0`，是否通过 Argo 隧道对外（仅 `ws` / `xhttp` 传输）
 - `xhttp_mode`：XHTTP 模式，`auto / packet-up / stream-up / stream-one`
@@ -218,7 +219,7 @@ docker-compose.fnos.yml  飞牛 NAS host 网络部署配置（NAS 目录中维�
 2. 添加节点：先选“部署组合”，面板按 ArgoX 的组合预设自动锁定协议、传输与安全，只显示该组合还需要填写的字段。
    - 13 个预设：VLESS + Reality Vision、VLESS + gRPC + Reality、VLESS + WebSocket、VMess + WebSocket、Trojan + WebSocket、Shadowsocks + WebSocket、VLESS + XHTTP (CDN)、VLESS + XHTTP H2 + Reality、VLESS + XHTTP H3（自签）、Hysteria2（自签）、Trojan Direct（自签）、Shadowsocks 2022 Direct、SOCKS5（仅出站）。
    - 隧道类组合自动勾选“通过 Argo 隧道对外”；自签类组合自动使用面板生成的自签证书；Reality 类组合显示伪装站点、目标、密钥对等字段。
-3. 节点可配置多个客户端，客户端 secret 自动生成。
+3. 每个节点固定一个默认客户端，客户端 secret（UUID / 密码）在保存时自动生成，编辑节点时保持不变。
 4. 点击“部署全部节点”：调用 `/api/servers/:id/deploy`，流程为安装 Xray → 写入 config → 重启 → 查询状态。
 5. 部署期间显示进度弹窗，完成后显示结果弹窗。
 

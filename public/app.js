@@ -40,102 +40,6 @@ const SS_METHODS = [
   '2022-blake3-chacha20-poly1305'
 ];
 
-function decodeBase64Text(value) {
-  let input = String(value || '').trim().replace(/-/g, '+').replace(/_/g, '/');
-  try { input = decodeURIComponent(input); } catch { /* keep raw base64 */ }
-  while (input.length % 4) input += '=';
-  try {
-    const binary = atob(input);
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
-  } catch { return ''; }
-}
-
-function parseV2rayClientLink(raw) {
-  const text = String(raw || '').trim();
-  if (!text) return null;
-  if (text.startsWith('vmess://')) {
-    const payload = text.slice(8);
-    const decoded = decodeBase64Text(payload.split('#')[0]) || payload;
-    try {
-      const data = JSON.parse(decoded);
-      return {
-        email: String(data.ps || data.remark || '').trim(),
-        secret: String(data.id || '').trim(),
-        security: String(data.scy || data.security || 'auto').trim() || 'auto',
-        flow: String(data.flow || '').trim()
-      };
-    } catch { return null; }
-  }
-  const schemes = [
-    ['vless://', 8], ['trojan://', 9], ['ss://', 5], ['socks5://', 9], ['socks://', 8]
-  ];
-  const scheme = schemes.find(([prefix]) => text.startsWith(prefix));
-  if (!scheme) return null;
-  const prefix = scheme[0];
-  const after = text.slice(prefix.length);
-  const hashIndex = after.indexOf('#');
-  const fragment = hashIndex >= 0 ? after.slice(hashIndex + 1) : '';
-  const main = hashIndex >= 0 ? after.slice(0, hashIndex) : after;
-  const queryIndex = main.indexOf('?');
-  const queryPart = queryIndex >= 0 ? main.slice(queryIndex + 1) : '';
-  const authority = queryIndex >= 0 ? main.slice(0, queryIndex) : main;
-  const params = new URLSearchParams(queryPart);
-  let email = '';
-  try { email = decodeURIComponent(fragment); } catch { email = fragment; }
-  email = email.trim() || params.get('remark') || '';
-  if (prefix === 'ss://') {
-    const atIndex = authority.indexOf('@');
-    const encodedUser = atIndex >= 0 ? authority.slice(0, atIndex) : authority;
-    const decodedInfo = decodeBase64Text(encodedUser);
-    const userInfo = decodedInfo && SS_METHODS.some((method) => decodedInfo.startsWith(`${method}:`))
-      ? decodedInfo
-      : encodedUser;
-    const colonIndex = userInfo.lastIndexOf(':');
-    if (colonIndex <= 0) return null;
-    let secret = userInfo.slice(colonIndex + 1);
-    try { secret = decodeURIComponent(secret); } catch { /* keep */ }
-    return { email, secret, security: '', flow: '' };
-  }
-  if (prefix === 'socks://' || prefix === 'socks5://') {
-    const atIndex = authority.lastIndexOf('@');
-    const userInfo = atIndex >= 0 ? authority.slice(0, atIndex) : '';
-    const colonIndex = userInfo.indexOf(':');
-    const user = colonIndex >= 0 ? userInfo.slice(0, colonIndex) : '';
-    const pass = colonIndex >= 0 ? userInfo.slice(colonIndex + 1) : '';
-    let decodedUser = user;
-    try { decodedUser = decodeURIComponent(user); } catch { /* keep */ }
-    let decodedPass = pass;
-    try { decodedPass = decodeURIComponent(pass); } catch { /* keep */ }
-    return { email: decodedUser || email, secret: decodedPass, security: '', flow: '' };
-  }
-  const atIndex = authority.indexOf('@');
-  if (atIndex < 0) return null;
-  let secret = authority.slice(0, atIndex);
-  try { secret = decodeURIComponent(secret); } catch { /* keep */ }
-  const security = params.get('security') || '';
-  return {
-    email,
-    secret,
-    security: security === 'tls' || security === 'reality' ? 'auto' : '',
-    flow: params.get('flow') || ''
-  };
-}
-
-function randomClientSecret() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function randomClientPassword() {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const bytes = new Uint8Array(18);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
-}
-
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (char) => ({
     '&': '&amp;',
@@ -1506,9 +1410,6 @@ function openNodeModal(serverId, node = null) {
         </option>
       `).join('')
     : '<option value="">暂无服务器</option>';
-  const clients = node?.clients?.length
-    ? node.clients.map((client) => ({ ...client, security: client.security || 'auto' }))
-    : [{ email: '', secret: '', flow: '', security: 'auto' }];
   const security = node?.security || 'none';
   const network = node?.network || 'tcp';
 
@@ -1663,22 +1564,6 @@ function openNodeModal(serverId, node = null) {
               <label id="path-label">路径 / serviceName</label>
               <input name="path" value="${escapeHtml(node?.path || '')}" placeholder="例如 /ws 或 grpc">
             </div>
-            <div class="field full">
-              <label>客户端</label>
-              <div class="client-toolbar">
-                <button type="button" class="btn ghost sm" id="bulk-gen-clients-btn" title="为当前客户端批量生成 UUID 或密码"><i data-lucide="wand-2"></i>批量生成</button>
-                <button type="button" class="btn ghost sm" id="import-clients-btn" title="从 v2rayN 分享链接导入客户端"><i data-lucide="download"></i>导入链接</button>
-              </div>
-              <div id="client-import-box" class="client-import-box" style="display:none">
-                <textarea id="client-import-input" placeholder="粘贴 v2rayN 分享链接，每行一个"></textarea>
-                <div class="paste-actions">
-                  <button type="button" class="btn ghost sm" id="client-import-cancel" title="取消导入">取消</button>
-                  <button type="button" class="btn primary sm" id="client-import-confirm" title="解析并导入客户端"><i data-lucide="download"></i>导入</button>
-                </div>
-              </div>
-              <div id="clients-editor"></div>
-              <button type="button" class="btn ghost sm" id="add-client-btn" title="添加一个客户端账号"><i data-lucide="user-plus"></i>添加客户端</button>
-            </div>
             <div class="field">
               <label class="hint">启用</label>
               <input type="checkbox" name="enabled" ${node?.enabled === 0 ? '' : 'checked'} style="width:auto;height:20px">
@@ -1693,58 +1578,6 @@ function openNodeModal(serverId, node = null) {
       </div>
     </div>
   `);
-
-  const initialClients = clients.map((client) => ({ ...client }));
-  function clientFieldCount() {
-    const protocol = $('select[name="protocol"]')?.value || 'vless';
-    if (protocol === 'vmess') return 4;
-    if (protocol === 'vless' && $('select[name="security"]')?.value === 'reality') return 4;
-    return 3;
-  }
-  function clientRowFieldsHtml(client) {
-    const protocol = $('select[name="protocol"]')?.value;
-    const isSocks = protocol === 'socks';
-    const isVmess = protocol === 'vmess';
-    const isVlessReality = protocol === 'vless' && $('select[name="security"]')?.value === 'reality';
-    const secretPlaceholder = isSocks || protocol === 'trojan' || protocol === 'shadowsocks' ? '密码' : 'UUID';
-    const flow = isVlessReality ? (client.flow || 'xtls-rprx-vision') : '';
-    return `
-        <input name="client_email" placeholder="${isSocks ? '用户名' : '备注'}" value="${escapeHtml(client.email)}">
-        <input name="client_secret" placeholder="${secretPlaceholder}" value="${escapeHtml(client.secret)}" required>
-        ${isVmess ? `
-        <select name="client_security">
-          ${['auto', 'aes-128-gcm', 'chacha20-poly1305'].map((item) => `
-            <option value="${item}" ${(client.security || 'auto') === item ? 'selected' : ''}>${escapeHtml(item)}</option>
-          `).join('')}
-        </select>` : ''}
-        ${isVlessReality ? `
-        <select name="client_flow">
-          ${['xtls-rprx-vision', 'xtls-rprx-vision-udp443', ''].map((item) => `
-            <option value="${item}" ${flow === item ? 'selected' : ''}>${item ? escapeHtml(item) : '无'}</option>
-          `).join('')}
-        </select>` : ''}
-    `;
-  }
-  function renderClientRows(valuesOverride = null) {
-    const rows = $$('#clients-editor .client-row');
-    const values = valuesOverride || (rows.length
-      ? rows.map((row) => ({
-        email: row.querySelector('[name="client_email"]').value,
-        secret: row.querySelector('[name="client_secret"]').value,
-        flow: row.querySelector('[name="client_flow"]')?.value || '',
-        security: row.querySelector('[name="client_security"]')?.value || 'auto'
-      }))
-      : initialClients);
-    $('#clients-editor').innerHTML = values.map((client) => `
-      <div class="client-row cols-${clientFieldCount()}">
-        ${clientRowFieldsHtml(client)}
-        <button type="button" class="icon-btn" data-remove-client title="移除" aria-label="移除"><i data-lucide="x"></i></button>
-      </div>
-    `).join('');
-    refreshIcons();
-  }
-
-  renderClientRows();
 
   function applyProtocolVisibility(protocol) {
     const isSocks = protocol === 'socks';
@@ -1886,94 +1719,10 @@ function openNodeModal(serverId, node = null) {
       const role = button.dataset.role;
       refreshPresetOptions(role);
       applyPreset($('#node-preset-select')?.value);
-      renderClientRows();
     });
-  });
-
-  $('#clients-editor').addEventListener('click', (event) => {
-    const removeButton = event.target.closest('[data-remove-client]');
-    if (!removeButton) return;
-    if ($$('#clients-editor .client-row').length === 1) {
-  renderClientRows();
-
-      return;
-    }
-    removeButton.closest('.client-row').remove();
   });
 
   $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
-
-  $('#add-client-btn').addEventListener('click', () => {
-    $('#clients-editor').insertAdjacentHTML('beforeend', `
-      <div class="client-row">
-        ${clientRowFieldsHtml({ email: '', secret: '', flow: '' })}
-        <button type="button" class="icon-btn" data-remove-client title="移除" aria-label="移除"><i data-lucide="x"></i></button>
-      </div>
-    `);
-    refreshIcons();
-  });
-
-  const bulkGenButton = $('#bulk-gen-clients-btn');
-  if (bulkGenButton) {
-    bulkGenButton.addEventListener('click', () => {
-      const protocol = presetById($('#node-preset-select')?.value).protocol;
-      const rows = $$('#clients-editor .client-row');
-      const current = rows.length
-        ? rows.map((row) => ({
-          email: row.querySelector('[name="client_email"]').value,
-          secret: row.querySelector('[name="client_secret"]').value,
-          flow: row.querySelector('[name="client_flow"]')?.value || '',
-          security: row.querySelector('[name="client_security"]')?.value || 'auto'
-        }))
-        : initialClients;
-      const useUuid = protocol === 'vmess' || protocol === 'vless';
-      const next = current.map((client) => ({ ...client, secret: useUuid ? randomClientSecret() : randomClientPassword() }));
-      renderClientRows(next);
-      toast(`已生成 ${next.length} 个${useUuid ? ' UUID' : ' 密码'}`, 'success');
-    });
-  }
-
-  const importButton = $('#import-clients-btn');
-  const importBox = $('#client-import-box');
-  if (importButton && importBox) {
-    importButton.addEventListener('click', () => {
-      importBox.style.display = '';
-      $('#client-import-input')?.focus();
-    });
-    $('#client-import-cancel')?.addEventListener('click', () => {
-      importBox.style.display = 'none';
-      $('#client-import-input').value = '';
-    });
-    $('#client-import-confirm')?.addEventListener('click', () => {
-      const textarea = $('#client-import-input');
-      const imported = String(textarea?.value || '').split(/\r?\n/)
-        .map((line) => line.trim())
-        .map((line) => parseV2rayClientLink(line))
-        .filter(Boolean);
-      if (!imported.length) {
-        toast('未识别到有效 v2rayN 分享链接', 'error');
-        return;
-      }
-      const rows = $$('#clients-editor .client-row');
-      const current = rows.length
-        ? rows.map((row) => ({
-          email: row.querySelector('[name="client_email"]').value,
-          secret: row.querySelector('[name="client_secret"]').value,
-          flow: row.querySelector('[name="client_flow"]')?.value || '',
-          security: row.querySelector('[name="client_security"]')?.value || 'auto'
-        }))
-        : initialClients;
-      const next = current.map((client) => ({ ...client }));
-      imported.forEach((client, index) => {
-        if (index < next.length) Object.assign(next[index], client);
-        else next.push({ ...client, security: client.security || 'auto', flow: client.flow || '' });
-      });
-      renderClientRows(next);
-      importBox.style.display = 'none';
-      if (textarea) textarea.value = '';
-      toast(`已导入 ${imported.length} 个客户端`, 'success');
-    });
-  }
 
   const presetSelect = $('#reality-preset-select');
   const randomRealityButton = $('#random-reality-btn');
@@ -2012,7 +1761,6 @@ function openNodeModal(serverId, node = null) {
   if (nodePresetSelect) {
     nodePresetSelect.addEventListener('change', () => {
       applyPreset(nodePresetSelect.value);
-      renderClientRows();
     });
   }
   const tunnelCheckboxEl = $('input[name="tunnel"]');
@@ -2034,12 +1782,6 @@ function openNodeModal(serverId, node = null) {
     data.security = preset.security;
     data.port = Number(data.port);
     data.enabled = form.querySelector('[name="enabled"]').checked;
-    data.clients = $$('#clients-editor .client-row').map((row) => ({
-      email: row.querySelector('[name="client_email"]').value,
-      secret: row.querySelector('[name="client_secret"]').value,
-      flow: row.querySelector('[name="client_flow"]')?.value || '',
-      security: row.querySelector('[name="client_security"]')?.value || 'auto'
-    }));
     data.method = form.querySelector('[name="method"]')?.value || 'aes-256-gcm';
     data.ss_network = form.querySelector('[name="ss_network"]')?.value || 'tcp';
     data.tunnel = Boolean(form.querySelector('[name="tunnel"]')?.checked) && Boolean(preset.tunnel);

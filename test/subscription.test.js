@@ -114,6 +114,44 @@ test('prepareNodesForDeploy fills missing reality keys and keeps existing ones',
   db.deleteServer(isolatedServer.id);
 });
 
+test('nodes keep one default client and do not rotate it on edit', () => {
+  const isolatedServer = db.saveServer({
+    name: '默认客户端服务器',
+    host: '198.51.100.98',
+    username: 'root',
+    auth_type: 'password',
+    password: 'local-only'
+  });
+  const node = db.saveNode({
+    server_id: isolatedServer.id,
+    name: '默认客户端节点',
+    protocol: 'vless',
+    role: 'inbound',
+    port: 21443,
+    network: 'tcp',
+    security: 'none',
+    enabled: true
+  });
+  assert.equal(node.clients.length, 1);
+  assert.ok(node.clients[0].secret);
+
+  const updated = db.saveNode({
+    server_id: isolatedServer.id,
+    name: '默认客户端节点（改名）',
+    protocol: 'vless',
+    role: 'inbound',
+    port: 21443,
+    network: 'tcp',
+    security: 'none',
+    enabled: true
+  }, node.id);
+  assert.equal(updated.clients.length, 1);
+  assert.equal(updated.clients[0].secret, node.clients[0].secret);
+
+  db.deleteNode(node.id);
+  db.deleteServer(isolatedServer.id);
+});
+
 test('creates a subscription with a one-time token and stores only its hash', async () => {
   const result = await request('/api/subscriptions', {
     method: 'POST',

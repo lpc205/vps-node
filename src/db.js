@@ -388,10 +388,13 @@ export function getNode(id) {
   return parseNode(db.prepare('SELECT * FROM nodes WHERE id = ?').get(id));
 }
 
-function normalizeClients(input) {
+function normalizeClients(input, existingClients = null) {
   const VMESS_SECURITIES = ['auto', 'aes-128-gcm', 'chacha20-poly1305'];
-  const clients = Array.isArray(input) && input.length > 0
-    ? input.map((client) => ({
+  const source = Array.isArray(input) && input.length > 0
+    ? input
+    : (Array.isArray(existingClients) && existingClients.length > 0 ? existingClients : null);
+  const clients = source
+    ? source.map((client) => ({
         email: String(client.email || '').trim(),
         secret: String(client.secret || '').trim(),
         flow: String(client.flow || '').trim(),
@@ -484,7 +487,7 @@ export function saveNode(input, id = null) {
     hy2_up: Math.max(0, Math.min(100000, Number(input.hy2_up) || 0)),
     hy2_down: Math.max(0, Math.min(100000, Number(input.hy2_down) || 0)),
     preferred_address: String(input.preferred_address || '').trim(),
-    clients_json: JSON.stringify(normalizeClients(input.clients)),
+    clients_json: JSON.stringify(normalizeClients(input.clients, existing?.clients)),
     enabled: input.enabled === false || input.enabled === 0 ? 0 : 1
   };
 
