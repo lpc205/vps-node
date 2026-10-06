@@ -214,7 +214,7 @@ app.delete('/api/servers/:id', asyncHandler(async (req, res) => {
   const force = req.query.force === 'true' || req.query.force === '1' || req.body?.force === true;
   if (!force) {
     try {
-      if (server.argo_mode && server.argo_mode !== 'none') {
+      if (listNodes(server.id).some((node) => node.tunnel === 1)) {
         await uninstallTunnel(server);
       }
       await uninstallXray(server);

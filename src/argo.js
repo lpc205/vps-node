@@ -36,8 +36,7 @@ export function tunnelNodes(nodes = []) {
 }
 
 export function tunnelRequired(server, nodes = []) {
-  if (tunnelNodes(nodes).length > 0) return true;
-  return ['quick', 'token', 'json'].includes(server?.argo_mode);
+  return tunnelNodes(nodes).length > 0;
 }
 
 function escapeNginxPath(value) {
@@ -273,8 +272,7 @@ echo "CLOUDFLARED_BIN=$CF_BIN"
 }
 
 export function buildCloudflaredInstallScript(server, nodes = []) {
-  const mode = ['quick', 'token', 'json'].includes(server?.argo_mode) ? server.argo_mode : 'none';
-  if (mode === 'none' || tunnelNodes(nodes).length === 0) {
+  if (tunnelNodes(nodes).length === 0) {
     return `
 set +e
 if command -v systemctl >/dev/null 2>&1; then
@@ -286,50 +284,12 @@ echo "CLOUDFLARED_MODE=none"
 `;
   }
 
-  const token = String(server?.argo_token || '');
   const port = Number(server?.nginx_port) > 0 ? Number(server.nginx_port) : DEFAULT_NGINX_PORT;
-  let tunnelConfigBlock = '';
-  if (mode === 'token') {
-    tunnelConfigBlock = `
-cat > /usr/local/etc/xray/cloudflared.env <<'EOF'
-${token}
-EOF
-chmod 600 /usr/local/etc/xray/cloudflared.env
-`;
-  } else if (mode === 'json') {
-    const credentials = JSON.parse(String(server?.argo_json || '{}'));
-    const tunnelId = String(credentials?.TunnelID || credentials?.tunnel_id || '').trim();
-    const credentialsB64 = Buffer.from(JSON.stringify(credentials), 'utf8').toString('base64');
-    tunnelConfigBlock = `
-mkdir -p /usr/local/etc/xray
-cat > /var/tmp/argo-creds.b64 <<'EOF'
-${credentialsB64}
-EOF
-base64 -d /var/tmp/argo-creds.b64 > /usr/local/etc/xray/tunnel.json
-chmod 600 /usr/local/etc/xray/tunnel.json
-rm -f /var/tmp/argo-creds.b64
-cat > /usr/local/etc/xray/tunnel.yml <<EOF
-tunnel: ${tunnelId}
-credentials-file: /usr/local/etc/xray/tunnel.json
-
-ingress:
-  - hostname: ${String(server?.argo_domain || '')}
-    service: http://localhost:${port}
-  - service: http_status:404
-EOF
-`;
-  }
-
-  const execStart = mode === 'token'
-    ? `/usr/local/bin/cloudflared tunnel --edge-ip-version auto --protocol http2 run --token $(cat /usr/local/etc/xray/cloudflared.env)`
-    : mode === 'json'
-      ? `/usr/local/bin/cloudflared tunnel --edge-ip-version auto --protocol http2 --config /usr/local/etc/xray/tunnel.yml run`
-      : `/usr/local/bin/cloudflared tunnel --edge-ip-version auto --protocol http2 --no-autoupdate --metrics 127.0.0.1:49312 --url http://localhost:${port}`;
+  const execStart = `/usr/local/bin/cloudflared tunnel --edge-ip-version auto --protocol http2 --no-autoupdate --metrics 127.0.0.1:49312 --url http://localhost:${port}`;
 
   return `
 set -e
 ${cloudflaredBinaryScript()}
-${tunnelConfigBlock}
 if command -v systemctl >/dev/null 2>&1; then
   cat > /etc/systemd/system/argo.service <<'SERVICE'
 [Unit]
@@ -381,7 +341,7 @@ else
   fi
   sleep 2
 fi
-echo "CLOUDFLARED_MODE=${mode}"
+echo "CLOUDFLARED_MODE=quick"
 `;
 }
 
@@ -405,32 +365,24 @@ echo "ARGO_NGINX_PORT=${port}"
 }
 
 export async function deployTunnel(server, nodes, options = {}) {
-  const requiresTunnel = tunnelRequired(server, nodes);
-  if (!requiresTunnel) return { ok: true, skipped: true };
-
   const tunnelNodeList = tunnelNodes(nodes);
+  if (tunnelNodeList.length === 0) return { ok: true, skipped: true };
+
   const outputs = {};
+  const nginx = await runChecked(runSudo(server, buildNginxInstallScript(server, nodes), { timeout: 180000 }));
+  outputs.nginx = nginx.stdout.trim();
 
-  if (tunnelNodeList.length > 0) {
-    const nginx = await runChecked(runSudo(server, buildNginxInstallScript(server, nodes), { timeout: 180000 }));
-    outputs.nginx = nginx.stdout.trim();
-  }
+  const cloudflared = await runChecked(runSudo(server, buildCloudflaredInstallScript(server, nodes), { timeout: 240000 }));
+  outputs.cloudflared = cloudflared.stdout.trim();
 
-  if (server?.argo_mode !== 'none' && tunnelNodeList.length > 0) {
-    const cloudflared = await runChecked(runSudo(server, buildCloudflaredInstallScript(server, nodes), { timeout: 240000 }));
-    outputs.cloudflared = cloudflared.stdout.trim();
+  const quick = await runChecked(runSudo(server, buildQuickTunnelDomainScript(server), { timeout: 90000 }));
+  const match = quick.stdout.match(/^ARGO_DOMAIN=(.*)$/m);
+  if (!match || !match[1]) {
+    const error = new Error('无法获取临时隧道域名，请稍后重试');
+    error.status = 502;
+    throw error;
   }
-
-  if (server?.argo_mode === 'quick' && tunnelNodeList.length > 0) {
-    const quick = await runChecked(runSudo(server, buildQuickTunnelDomainScript(server), { timeout: 90000 }));
-    const match = quick.stdout.match(/^ARGO_DOMAIN=(.*)$/m);
-    if (!match || !match[1]) {
-      const error = new Error('无法获取临时隧道域名，请稍后重试或改用 Token 隧道');
-      error.status = 502;
-      throw error;
-    }
-    outputs.argo_domain = match[1].trim();
-  }
+  outputs.argo_domain = match[1].trim();
 
   return { ok: true, ...outputs };
 }

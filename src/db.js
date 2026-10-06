@@ -316,22 +316,6 @@ export function saveServer(input, id = null) {
     error.status = 400;
     throw error;
   }
-  if (data.argo_mode === 'token' && !data.argo_token) {
-    const error = new Error('argo token is required for token tunnel');
-    error.status = 400;
-    throw error;
-  }
-  if (data.argo_mode === 'json' && !data.argo_json) {
-    const error = new Error('argo credentials json is required for json tunnel');
-    error.status = 400;
-    throw error;
-  }
-  if (['token', 'json'].includes(data.argo_mode) && !data.argo_domain) {
-    const error = new Error('argo domain is required for fixed tunnels');
-    error.status = 400;
-    throw error;
-  }
-
   if (existing) {
     db.prepare(`
       UPDATE servers SET
@@ -501,15 +485,6 @@ export function saveNode(input, id = null) {
     error.status = 400;
     throw error;
   }
-  if (data.tunnel) {
-    const targetServer = getServerRecord(String(input.server_id || existing?.server_id || ''));
-    if (!targetServer || targetServer.argo_mode === 'none') {
-      const error = new Error('请先在服务器上配置 Argo 隧道，再启用节点的隧道模式');
-      error.status = 400;
-      throw error;
-    }
-  }
-
   if (existing) {
     if (existing.role !== data.role) {
       db.prepare('DELETE FROM routes WHERE inbound_node_id = ? OR outbound_node_id = ?').run(id, id);

@@ -1164,7 +1164,6 @@ function runSubscriptionAction(action, subscriptionId, button) {
 function openServerModal(server = null) {
   const isEdit = Boolean(server);
   const authType = server?.auth_type || 'password';
-  const argoMode = server?.argo_mode || 'none';
   setModal(`
     <div class="modal-backdrop">
       <div class="modal">
@@ -1244,42 +1243,6 @@ function openServerModal(server = null) {
           </div>
 
           <div class="form-section">
-            <div class="form-section-title">Argo 隧道</div>
-            <div class="form-grid">
-              <div class="field">
-                <label>隧道模式</label>
-                <select name="argo_mode" id="argo-mode-select">
-                  ${[['none', '不使用'], ['quick', '临时隧道'], ['token', 'Token 隧道'], ['json', 'JSON 隧道']].map(([value, label]) => `
-                    <option value="${value}" ${argoMode === value ? 'selected' : ''}>${label}</option>
-                  `).join('')}
-                </select>
-                <span class="hint">节点使用 WS / XHTTP 传输时，通过 Argo 隧道对外提供服务。</span>
-              </div>
-              <div class="field">
-                <label>Nginx 内部端口</label>
-                <input name="nginx_port" type="number" min="0" max="65535" value="${escapeHtml(server?.nginx_port || '')}" placeholder="留空使用 8080">
-              </div>
-              <div class="field full argo-domain-field" style="${argoMode === 'none' ? 'display:none' : ''}">
-                <label>隧道域名</label>
-                <input name="argo_domain" value="${escapeHtml(server?.argo_domain || '')}" placeholder="${argoMode === 'quick' ? '部署后自动获取临时域名' : '例如 argo.example.com'}" ${argoMode === 'quick' ? 'readonly' : ''}>
-                <span class="hint" id="argo-domain-hint">${argoMode === 'quick' ? '临时隧道部署后自动回填 trycloudflare.com 域名。' : '固定隧道请填写 Cloudflare 中配置的域名。'}</span>
-              </div>
-              <div class="field full argo-token-field" style="${argoMode === 'token' ? '' : 'display:none'}">
-                <label>隧道 Token</label>
-                <div class="field-row">
-                  <input name="argo_token" type="password" autocomplete="new-password" placeholder="${server?.has_argo_token ? '已保存，留空保持不变' : 'Cloudflare Tunnel Token'}">
-                  <button type="button" class="reveal-btn" data-reveal="input[name='argo_token']">显示</button>
-                </div>
-              </div>
-              <div class="field full argo-json-field" style="${argoMode === 'json' ? '' : 'display:none'}">
-                <label>隧道凭据 JSON</label>
-                <textarea name="argo_json" class="masked" placeholder='{"AccountTag":"...","TunnelSecret":"...","TunnelID":"..."}'>${escapeHtml(server?.has_argo_json ? '' : '')}</textarea>
-                <span class="hint">${server?.has_argo_json ? '已保存凭据，留空保持不变。' : 'Cloudflare Tunnel 的凭据 JSON。'}</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="form-section">
             <div class="form-section-title">备注</div>
             <div class="form-grid">
               <div class="field full">
@@ -1298,15 +1261,6 @@ function openServerModal(server = null) {
   `);
 
   $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
-  const argoSelect = $('#argo-mode-select');
-  if (argoSelect) {
-    argoSelect.addEventListener('change', () => {
-      const mode = argoSelect.value;
-      $('#modal-root .argo-domain-field').style.display = mode === 'none' ? 'none' : '';
-      $('#modal-root .argo-token-field').style.display = mode === 'token' ? '' : 'none';
-      $('#modal-root .argo-json-field').style.display = mode === 'json' ? '' : 'none';
-    });
-  }
   $$('#modal-root .segmented button').forEach((button) => {
     button.addEventListener('click', () => {
       const auth = button.dataset.auth;
@@ -1340,8 +1294,6 @@ function openServerModal(server = null) {
     if (data.auth_type === 'key' && !data.private_key) delete data.private_key;
     if (!data.passphrase) delete data.passphrase;
     if (!data.sudo_password) delete data.sudo_password;
-    if (!data.argo_token) delete data.argo_token;
-    if (!data.argo_json) delete data.argo_json;
     return data;
   }
 
@@ -1499,7 +1451,7 @@ function openNodeModal(serverId, node = null) {
             </div>
             <div class="field full tunnel-field" style="display:none">
               <label class="hint">部署方式</label>
-              <label class="inline-check"><input type="checkbox" name="tunnel" ${node?.tunnel === 1 ? 'checked' : ''} style="width:auto;height:20px"> 通过 Argo 隧道对外（源站只监听 127.0.0.1，由服务器上的隧道配置决定入口域名）</label>
+              <label class="inline-check"><input type="checkbox" name="tunnel" ${node?.tunnel === 1 ? 'checked' : ''} style="width:auto;height:20px"> 通过 Argo 临时隧道对外（源站只监听 127.0.0.1，部署时自动创建隧道）</label>
             </div>
             <div class="field xhttp-field" style="display:none">
               <label>XHTTP 模式</label>

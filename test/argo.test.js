@@ -40,10 +40,10 @@ test('nginx config skips non tunnel nodes', () => {
   assert.doesNotMatch(config, /location/);
 });
 
-test('tunnelRequired follows server argo mode and node tunnel flags', () => {
-  assert.equal(tunnelRequired({ argo_mode: 'none' }, [{ ...tunnelNode, tunnel: 1 }]), true);
-  assert.equal(tunnelRequired({ argo_mode: 'quick' }, [{ ...tunnelNode, tunnel: 0 }]), true);
-  assert.equal(tunnelRequired({ argo_mode: 'none' }, [{ ...tunnelNode, tunnel: 0 }]), false);
+test('tunnelRequired follows the node tunnel flag', () => {
+  assert.equal(tunnelRequired({}, [{ ...tunnelNode, tunnel: 1 }]), true);
+  assert.equal(tunnelRequired({}, [{ ...tunnelNode, tunnel: 0 }]), false);
+  assert.equal(tunnelRequired({}, []), false);
 });
 
 test('self signed helpers fill certificate paths', () => {
@@ -61,38 +61,16 @@ test('certificate script creates a long lived self signed pair', () => {
   assert.match(script, /DNS = example\.com/);
 });
 
-test('cloudflared script supports quick, token and json tunnels', () => {
-  const quick = buildCloudflaredInstallScript(
-    { argo_mode: 'quick', nginx_port: 8080 },
-    [tunnelNode]
-  );
+test('cloudflared script starts a quick tunnel pointed at nginx', () => {
+  const quick = buildCloudflaredInstallScript({ nginx_port: 8080 }, [tunnelNode]);
   assert.match(quick, /--url http:\/\/localhost:8080/);
   assert.match(quick, /--metrics 127\.0\.0\.1:49312/);
-
-  const token = buildCloudflaredInstallScript(
-    { argo_mode: 'token', argo_token: 'token-value', argo_domain: 'argo.example.com', nginx_port: 8080 },
-    [tunnelNode]
-  );
-  assert.match(token, /run --token \$\(cat \/usr\/local\/etc\/xray\/cloudflared\.env\)/);
-  assert.match(token, /token-value/);
-
-  const json = buildCloudflaredInstallScript(
-    {
-      argo_mode: 'json',
-      argo_json: JSON.stringify({ TunnelID: 'tunnel-id', TunnelSecret: 'secret' }),
-      argo_domain: 'argo.example.com',
-      nginx_port: 9090
-    },
-    [tunnelNode]
-  );
-  assert.match(json, /credentials-file: \/usr\/local\/etc\/xray\/tunnel\.json/);
-  assert.match(json, /hostname: argo\.example\.com/);
-  assert.match(json, /service: http:\/\/localhost:9090/);
-  assert.match(json, /tunnel: tunnel-id/);
+  assert.doesNotMatch(quick, /tunnel\.yml/);
+  assert.doesNotMatch(quick, /cloudflared\.env/);
 });
 
 test('cloudflared script stops argo service when tunnel is disabled', () => {
-  const script = buildCloudflaredInstallScript({ argo_mode: 'none' }, [tunnelNode]);
+  const script = buildCloudflaredInstallScript({}, [{ ...tunnelNode, tunnel: 0 }]);
   assert.match(script, /CLOUDFLARED_MODE=none/);
   assert.match(script, /systemctl stop argo/);
 });
