@@ -28,6 +28,7 @@ import {
   saveRoute,
   saveServer,
   setSubscriptionEnabled,
+  prepareNodesForDeploy,
   updateSubscription
 } from './db.js';
 import {
@@ -264,8 +265,10 @@ app.post('/api/servers/:id/x25519', asyncHandler(async (req, res) => {
 app.post('/api/servers/:id/deploy', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
-  const nodes = listNodes(req.params.id);
+  let nodes = listNodes(req.params.id);
   if (!nodes.length) return res.status(400).json({ error: 'add at least one node before deploy' });
+  prepareNodesForDeploy(nodes, generateRealityKeypair);
+  nodes = listNodes(req.params.id);
   const routes = routesForServer(req.params.id);
   res.json(await deployServer(server, nodes, { routes }));
 }));

@@ -1267,6 +1267,11 @@ textarea {
   cursor: pointer;
 }
 
+.locked-input {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  color: var(--muted);
+}
+
 .form-section {
   display: grid;
   gap: 14px;

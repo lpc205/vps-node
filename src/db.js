@@ -554,6 +554,24 @@ export function deleteNode(id) {
   }
 }
 
+export function updateNodeRealityKeys(id, { privateKey = '', publicKey = '' } = {}) {
+  const existing = getNode(id);
+  if (!existing) return null;
+  db.prepare('UPDATE nodes SET private_key = ?, public_key = ?, updated_at = ? WHERE id = ?')
+    .run(String(privateKey || ''), String(publicKey || ''), now(), id);
+  return getNode(id);
+}
+
+export function prepareNodesForDeploy(nodes, generateKeypair) {
+  for (const node of nodes) {
+    if (node.protocol === 'vless' && node.security === 'reality' && (!node.private_key || !node.public_key)) {
+      const pair = generateKeypair();
+      updateNodeRealityKeys(node.id, { privateKey: pair.privateKey, publicKey: pair.publicKey });
+    }
+  }
+  return nodes;
+}
+
 function publicSubscription(row, nodeCount = null) {
   if (!row) return null;
   const { token_hash, token_ciphertext, ...safe } = row;

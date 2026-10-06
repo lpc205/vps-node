@@ -77,6 +77,43 @@ after(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
+test('prepareNodesForDeploy fills missing reality keys and keeps existing ones', () => {
+  const isolatedServer = db.saveServer({
+    name: '密钥测试服务器',
+    host: '198.51.100.99',
+    username: 'root',
+    auth_type: 'password',
+    password: 'local-only'
+  });
+  const realityNode = db.saveNode({
+    server_id: isolatedServer.id,
+    name: 'Reality 自动密钥',
+    protocol: 'vless',
+    role: 'inbound',
+    port: 20443,
+    network: 'tcp',
+    security: 'reality',
+    dest: 'www.microsoft.com:443',
+    server_names: 'www.microsoft.com',
+    clients: [{ email: 'reality-user', secret: 'reality-secret' }],
+    enabled: true
+  });
+  assert.equal(realityNode.private_key, '');
+  assert.equal(realityNode.public_key, '');
+
+  db.prepareNodesForDeploy([realityNode], () => ({ privateKey: 'generated-private', publicKey: 'generated-public' }));
+  const filled = db.getNode(realityNode.id);
+  assert.equal(filled.private_key, 'generated-private');
+  assert.equal(filled.public_key, 'generated-public');
+
+  db.prepareNodesForDeploy([filled], () => ({ privateKey: 'other-private', publicKey: 'other-public' }));
+  const untouched = db.getNode(realityNode.id);
+  assert.equal(untouched.private_key, 'generated-private');
+  assert.equal(untouched.public_key, 'generated-public');
+  db.deleteNode(realityNode.id);
+  db.deleteServer(isolatedServer.id);
+});
+
 test('creates a subscription with a one-time token and stores only its hash', async () => {
   const result = await request('/api/subscriptions', {
     method: 'POST',

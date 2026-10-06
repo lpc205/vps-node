@@ -1636,14 +1636,14 @@ function openNodeModal(serverId, node = null) {
             </div>
             <div class="field full reality-field" style="${security === 'reality' ? '' : 'display:none'}">
               <label>Reality 私钥</label>
-              <input name="private_key" value="${escapeHtml(node?.private_key || '')}" placeholder="由 xray x25519 生成">
+              <input name="private_key" class="locked-input" value="${escapeHtml(node?.private_key || '')}" placeholder="保存并部署时自动生成" readonly>
             </div>
             <div class="field full reality-field" style="${security === 'reality' ? '' : 'display:none'}">
               <label>Reality 公钥</label>
-              <input name="public_key" value="${escapeHtml(node?.public_key || '')}" placeholder="客户端分享链接使用">
+              <input name="public_key" class="locked-input" value="${escapeHtml(node?.public_key || '')}" placeholder="保存并部署时自动生成" readonly>
             </div>
             <div class="field full reality-field" style="${security === 'reality' ? '' : 'display:none'}">
-              <button type="button" class="btn ghost" id="gen-reality-btn" title="生成本地 X25519 Reality 密钥对"><i data-lucide="key-round"></i>生成 Reality 密钥对</button>
+              <span class="hint">密钥对会在保存并部署时自动生成并回填，无需手动操作。</span>
             </div>
             <div class="field full reality-field" style="${security === 'reality' ? '' : 'display:none'}">
               <label>shortIds</label>
@@ -1956,23 +1956,6 @@ function openNodeModal(serverId, node = null) {
       importBox.style.display = 'none';
       if (textarea) textarea.value = '';
       toast(`已导入 ${imported.length} 个客户端`, 'success');
-    });
-  }
-
-  const realityButton = $('#gen-reality-btn');
-  if (realityButton) {
-    realityButton.addEventListener('click', async () => {
-      const targetServerId = $('#node-server-id')?.value || initialServerId;
-      if (!targetServerId) {
-        toast('请先选择服务器后再生成 Reality 密钥对', 'error');
-        return;
-      }
-      withBusy(realityButton, '生成中...', async () => {
-        const pair = await api(`/api/servers/${targetServerId}/x25519`, { method: 'POST' });
-        $('input[name="private_key"]').value = pair.privateKey;
-        $('input[name="public_key"]').value = pair.publicKey;
-        toast('Reality 密钥对已生成', 'success');
-      }).catch((error) => toast(error.message, 'error'));
     });
   }
 
