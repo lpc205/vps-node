@@ -7,6 +7,20 @@ function splitList(value) {
     .filter(Boolean);
 }
 
+function parsePreferredAddress(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^\[([^\]]+)\](?::(\d+))?$/) || raw.match(/^([^:]+):(\d+)$/);
+  if (match) {
+    const port = Number(match[2]);
+    return {
+      host: match[1],
+      port: Number.isInteger(port) && port > 0 && port <= 65535 ? port : 443
+    };
+  }
+  return { host: raw, port: 443 };
+}
+
 export function canUseReality(protocol, network) {
   return protocol === 'vless' && network !== 'ws';
 }
@@ -304,8 +318,9 @@ export function buildXrayConfig(nodes, routes = []) {
 
 export function nodeLinks(node, server) {
   const tunnel = isTunnelNode(node) && server?.argo_domain;
-  const host = tunnel ? server.argo_domain : (server?.host || '');
-  const port = tunnel ? 443 : node.port;
+  const preferred = tunnel ? parsePreferredAddress(node.preferred_address) : null;
+  const host = tunnel ? (preferred?.host || server.argo_domain) : (server?.host || '');
+  const port = tunnel ? (preferred?.port || 443) : node.port;
   const clients = node.clients || [];
   const remark = encodeURIComponent(`${node.name}${clients.length > 1 ? `-${clients[0].email || '1'}` : ''}`);
   const network = node.network || 'tcp';

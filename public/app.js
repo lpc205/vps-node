@@ -1651,7 +1651,13 @@ function openNodeModal(serverId, node = null) {
             </div>
             <div class="field full">
               <label id="sni-label">SNI / serverName</label>
-              <input name="sni" value="${escapeHtml(node?.sni || '')}" placeholder="域名或目标站点">
+              <input name="sni" id="sni-input" value="${escapeHtml(node?.sni || '')}" placeholder="域名或目标站点">
+              <span class="hint" id="sni-hint" style="display:none">隧道模式下 Host / SNI 自动使用服务器的隧道域名。</span>
+            </div>
+            <div class="field full preferred-field" style="display:none">
+              <label>优选域名 / 地址</label>
+              <input name="preferred_address" value="${escapeHtml(node?.preferred_address || '')}" placeholder="例如 cf.090227.xyz 或 1.2.3.4，可带端口">
+              <span class="hint">选填。填写后客户端连接地址用它，Host / SNI 仍使用服务器隧道域名，端口默认 443。</span>
             </div>
             <div class="field full path-field" style="${network === 'tcp' ? 'display:none' : ''}">
               <label id="path-label">路径 / serviceName</label>
@@ -1750,6 +1756,9 @@ function openNodeModal(serverId, node = null) {
     const securityField = $('select[name="security"]').closest('.field');
     const sniField = $('input[name="sni"]').closest('.field');
     const sniLabel = $('#sni-label');
+    const sniInput = $('#sni-input');
+    const sniHint = $('#sni-hint');
+    const preferredField = $('.preferred-field');
     const pathLabel = $('#path-label');
     const pathField = $('.path-field');
     const tunnelField = $('.tunnel-field');
@@ -1760,6 +1769,7 @@ function openNodeModal(serverId, node = null) {
     const isTrojan = protocol === 'trojan';
     const isVmess = protocol === 'vmess';
     const isShadowsocks = protocol === 'shadowsocks';
+    const tunnelMode = Boolean($('input[name="tunnel"]')?.checked);
 
     $$('.hy2-field').forEach((field) => field.style.display = isHy2 ? '' : 'none');
     ['.ss-field', '.xhttp-field', '.tunnel-field', '.self-signed-field', '.tls-field', '.reality-field'].forEach((selector) => {
@@ -1781,17 +1791,23 @@ function openNodeModal(serverId, node = null) {
 
     networkField.style.display = 'none';
     securityField.style.display = 'none';
+    if (sniHint) sniHint.style.display = tunnelMode ? '' : 'none';
+    if (preferredField) preferredField.style.display = tunnelMode && ['ws', 'xhttp'].includes(network) ? '' : 'none';
 
     if (isVless || isTrojan || isVmess) {
       sniField.style.display = '';
-      if (sniLabel) sniLabel.textContent = tunnelCheckbox?.checked ? 'Host / 伪装域名' : 'SNI / serverName';
+      if (sniInput) sniInput.style.display = tunnelMode ? 'none' : '';
+      if (sniLabel) {
+        sniLabel.textContent = tunnelMode ? 'Host / SNI（自动）' : 'SNI / serverName';
+      }
       if (pathField) pathField.style.display = network === 'tcp' ? 'none' : '';
       if (pathLabel) pathLabel.textContent = network === 'grpc' ? 'serviceName' : '路径';
     } else if (isShadowsocks) {
       $$('.ss-field').forEach((field) => { field.style.display = ''; });
       if (network === 'ws') {
         sniField.style.display = '';
-        if (sniLabel) sniLabel.textContent = 'Host / 伪装域名';
+        if (sniInput) sniInput.style.display = tunnelMode ? 'none' : '';
+        if (sniLabel) sniLabel.textContent = tunnelMode ? 'Host / SNI（自动）' : 'Host / 伪装域名';
         if (pathField) pathField.style.display = '';
         if (pathLabel) pathLabel.textContent = '路径';
       } else {
@@ -2002,10 +2018,7 @@ function openNodeModal(serverId, node = null) {
   const tunnelCheckboxEl = $('input[name="tunnel"]');
   if (tunnelCheckboxEl) {
     tunnelCheckboxEl.addEventListener('change', () => {
-      const label = $('#sni-label');
-      if (label && protocolSelect.value !== 'hysteria2') {
-        label.textContent = tunnelCheckboxEl.checked ? 'Host / 伪装域名' : 'SNI / serverName';
-      }
+      applyProtocolVisibility(protocolSelect.value);
     });
   }
 

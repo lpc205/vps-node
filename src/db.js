@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   self_signed INTEGER NOT NULL DEFAULT 0,
   hy2_up INTEGER NOT NULL DEFAULT 0,
   hy2_down INTEGER NOT NULL DEFAULT 0,
+  preferred_address TEXT NOT NULL DEFAULT '',
   clients_json TEXT NOT NULL DEFAULT '[]',
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
@@ -157,6 +158,9 @@ if (!nodeColumns.some((column) => column.name === 'hy2_up')) {
 }
 if (!nodeColumns.some((column) => column.name === 'hy2_down')) {
   db.exec('ALTER TABLE nodes ADD COLUMN hy2_down INTEGER NOT NULL DEFAULT 0');
+}
+if (!nodeColumns.some((column) => column.name === 'preferred_address')) {
+  db.exec("ALTER TABLE nodes ADD COLUMN preferred_address TEXT NOT NULL DEFAULT ''");
 }
 
 const serverColumns = db.prepare('PRAGMA table_info(servers)').all();
@@ -479,6 +483,7 @@ export function saveNode(input, id = null) {
     self_signed: input.self_signed === true || input.self_signed === 1 ? 1 : 0,
     hy2_up: Math.max(0, Math.min(100000, Number(input.hy2_up) || 0)),
     hy2_down: Math.max(0, Math.min(100000, Number(input.hy2_down) || 0)),
+    preferred_address: String(input.preferred_address || '').trim(),
     clients_json: JSON.stringify(normalizeClients(input.clients)),
     enabled: input.enabled === false || input.enabled === 0 ? 0 : 1
   };
@@ -512,14 +517,14 @@ export function saveNode(input, id = null) {
         security = ?, method = ?, ss_network = ?, sni = ?, path = ?,
         cert_file = ?, key_file = ?, dest = ?, server_names = ?, private_key = ?,
         short_ids = ?, public_key = ?, tunnel = ?, xhttp_mode = ?, self_signed = ?,
-        hy2_up = ?, hy2_down = ?,
+        hy2_up = ?, hy2_down = ?, preferred_address = ?,
         clients_json = ?, enabled = ?, updated_at = ?
       WHERE id = ?
     `).run(existing.server_id, data.name, data.protocol, data.role, data.port, data.network,
       data.security, data.method, data.ss_network, data.sni, data.path,
       data.cert_file, data.key_file, data.dest, data.server_names, data.private_key,
       data.short_ids, data.public_key, data.tunnel, data.xhttp_mode, data.self_signed,
-      data.hy2_up, data.hy2_down,
+      data.hy2_up, data.hy2_down, data.preferred_address,
       data.clients_json, data.enabled, timestamp, id);
     return getNode(id);
   }
@@ -530,13 +535,14 @@ export function saveNode(input, id = null) {
       (id, server_id, name, protocol, role, port, network, security, method,
        ss_network, sni, path, cert_file, key_file, dest, server_names,
        private_key, short_ids, public_key, tunnel, xhttp_mode, self_signed, hy2_up, hy2_down,
+       preferred_address,
        clients_json, enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(nodeId, input.server_id, data.name, data.protocol, data.role, data.port, data.network,
     data.security, data.method, data.ss_network, data.sni, data.path,
     data.cert_file, data.key_file, data.dest, data.server_names,
     data.private_key, data.short_ids, data.public_key, data.tunnel, data.xhttp_mode,
-    data.self_signed, data.hy2_up, data.hy2_down,
+    data.self_signed, data.hy2_up, data.hy2_down, data.preferred_address,
     data.clients_json, data.enabled, timestamp, timestamp);
   return getNode(nodeId);
 }

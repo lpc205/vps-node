@@ -425,6 +425,36 @@ test('tunnel ws nodes listen on localhost and link via argo domain', () => {
   assert.match(link.link, /path=%2Fargox-vl%3Fed%3D2560/);
 });
 
+test('tunnel links use preferred address with argo domain as host and sni', () => {
+  const node = {
+    id: 't2',
+    name: 'vmess-argo',
+    protocol: 'vmess',
+    port: 30001,
+    network: 'ws',
+    security: 'none',
+    path: '/argox-vm',
+    tunnel: 1,
+    preferred_address: 'cf.090227.xyz:2053',
+    enabled: 1,
+    clients: [{ email: 'u1', secret: 'uuid-2', flow: '', security: 'auto' }]
+  };
+  const server = { host: '203.0.113.10', argo_domain: 'demo.trycloudflare.com' };
+  const [one] = nodeLinks(node, server);
+  const payload = JSON.parse(Buffer.from(one.link.slice('vmess://'.length), 'base64url').toString());
+  assert.equal(payload.add, 'cf.090227.xyz');
+  assert.equal(payload.port, 2053);
+  assert.equal(payload.host, 'demo.trycloudflare.com');
+  assert.equal(payload.sni, 'demo.trycloudflare.com');
+  assert.equal(payload.tls, 'tls');
+  assert.equal(payload.path, '/argox-vm');
+
+  const noPreferred = nodeLinks({ ...node, preferred_address: '' }, server);
+  const fallback = JSON.parse(Buffer.from(noPreferred[0].link.slice('vmess://'.length), 'base64url').toString());
+  assert.equal(fallback.add, 'demo.trycloudflare.com');
+  assert.equal(fallback.port, 443);
+});
+
 test('xhttp transport emits xhttp settings and share link', () => {
   const node = {
     id: 'x1',

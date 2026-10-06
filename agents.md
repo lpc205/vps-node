@@ -228,6 +228,8 @@ docker-compose.fnos.yml  飞牛 NAS host 网络部署配置（NAS 目录中维�
 2. 节点表单把 WS / XHTTP 传输的节点勾选“通过 Argo 隧道对外”，保存后该入站只监听 `127.0.0.1`。
 3. 部署时面板依次执行：安装 Xray → 生成自签证书（如需要）→ 写入 Xray 配置 → 安装并启动 nginx（按路径反代 WS / XHTTP）→ 安装 cloudflared 并写入 `argo-nginx.service` / `argo.service` → 临时隧道自动回写域名。
 4. 分享链接改用 Argo 域名 + 443 + TLS，WS 路径带 `?ed=2560`，客户端 `Host` / `SNI` 都用隧道域名。
+   - 节点可另填「优选域名 / 地址」（`preferred_address`）：填写后客户端连接地址用它（可带端口，默认 443），`Host` / `SNI` 仍使用服务器隧道域名；留空则连接地址也用隧道域名。
+   - 临时隧道的域名由面板在部署后自动回写，不需要手动填到 `SNI`。
 5. 状态巡检额外检查 nginx 与 cloudflared；隧道未运行会派生出 `tunnel_down` 漂移，可用“恢复隧道”重新部署。
 
 ### 路由连接
