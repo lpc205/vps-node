@@ -365,6 +365,36 @@ function protocolLabel(protocol) {
   }[protocol] || protocol;
 }
 
+const NODE_PRESETS = [
+  { id: 'vless-reality-vision', label: 'VLESS + Reality Vision', hint: '直连 · TCP + Reality + Vision', protocol: 'vless', network: 'tcp', security: 'reality', reality: true },
+  { id: 'vless-grpc-reality', label: 'VLESS + gRPC + Reality', hint: '直连 · gRPC + Reality', protocol: 'vless', network: 'grpc', security: 'reality', reality: true },
+  { id: 'vless-ws', label: 'VLESS + WebSocket', hint: 'Argo 隧道 / CDN', protocol: 'vless', network: 'ws', security: 'none', tunnel: true },
+  { id: 'vmess-ws', label: 'VMess + WebSocket', hint: 'Argo 隧道 / CDN', protocol: 'vmess', network: 'ws', security: 'none', tunnel: true },
+  { id: 'trojan-ws', label: 'Trojan + WebSocket', hint: 'Argo 隧道 / CDN', protocol: 'trojan', network: 'ws', security: 'none', tunnel: true },
+  { id: 'shadowsocks-ws', label: 'Shadowsocks + WebSocket', hint: 'Argo 隧道 / CDN', protocol: 'shadowsocks', network: 'ws', security: 'none', tunnel: true },
+  { id: 'vless-xhttp-cdn', label: 'VLESS + XHTTP (CDN)', hint: 'Argo 隧道 / CDN', protocol: 'vless', network: 'xhttp', security: 'none', tunnel: true },
+  { id: 'vless-xhttp-h2-reality', label: 'VLESS + XHTTP H2 + Reality', hint: '直连 · XHTTP + H2 + Reality', protocol: 'vless', network: 'xhttp', security: 'reality', reality: true },
+  { id: 'vless-xhttp-h3-direct', label: 'VLESS + XHTTP H3 (自签)', hint: '直连 · HTTP/3 + 自签证书', protocol: 'vless', network: 'xhttp', security: 'tls', selfSigned: true },
+  { id: 'hysteria2', label: 'Hysteria2', hint: '直连 · UDP + 自签证书', protocol: 'hysteria2', network: 'tcp', security: 'tls', selfSigned: true },
+  { id: 'trojan-direct', label: 'Trojan Direct', hint: '直连 · 自签证书', protocol: 'trojan', network: 'tcp', security: 'tls', selfSigned: true },
+  { id: 'ss2022-direct', label: 'Shadowsocks 2022 Direct', hint: '直连 · SS2022 原生加密', protocol: 'shadowsocks', network: 'tcp', security: 'none' },
+  { id: 'socks5', label: 'SOCKS5', hint: '出站代理', protocol: 'socks', network: 'tcp', security: 'none', outboundOnly: true }
+];
+
+function presetById(id) {
+  return NODE_PRESETS.find((item) => item.id === id) || NODE_PRESETS[0];
+}
+
+function detectPreset(node) {
+  if (!node) return NODE_PRESETS[0];
+  const match = NODE_PRESETS.find((preset) => (
+    preset.protocol === node.protocol
+    && preset.network === (node.network || 'tcp')
+    && preset.security === (node.security || 'none')
+  ));
+  return match || NODE_PRESETS[0];
+}
+
 const STATUS_META = {
   running: { label: '在线运行', tone: 'green' },
   service_stopped: { label: '服务停止', tone: 'amber' },
@@ -1510,12 +1540,13 @@ function openNodeModal(serverId, node = null) {
               </div>
             </div>
             <div class="field">
-              <label>协议</label>
-              <select name="protocol">
-                ${['vmess', 'vless', 'trojan', 'shadowsocks', 'socks', 'hysteria2'].map((protocol) => `
-                  <option value="${protocol}" ${(node?.protocol || 'vless') === protocol ? 'selected' : ''}>${escapeHtml(protocolLabel(protocol))}</option>
+              <label>部署组合</label>
+              <select name="preset" id="node-preset-select">
+                ${NODE_PRESETS.map((preset) => `
+                  <option value="${preset.id}" ${detectPreset(node).id === preset.id ? 'selected' : ''}>${escapeHtml(preset.label)}</option>
                 `).join('')}
               </select>
+              <span class="hint" id="node-preset-hint">${escapeHtml(detectPreset(node).hint)}</span>
             </div>
             <div class="field">
               <label>端口</label>
@@ -1537,7 +1568,7 @@ function openNodeModal(serverId, node = null) {
                 `).join('')}
               </select>
             </div>
-            <div class="field">
+            <div class="field" style="display:none">
               <label>传输</label>
               <select name="network">
                 ${['tcp', 'ws', 'grpc', 'httpupgrade', 'xhttp'].map((item) => `
@@ -1545,7 +1576,7 @@ function openNodeModal(serverId, node = null) {
                 `).join('')}
               </select>
             </div>
-            <div class="field">
+            <div class="field" style="display:none">
               <label>安全</label>
               <select name="security">
                 ${[['none', '无加密'], ['tls', 'TLS'], ['reality', 'Reality']].map(([value, label]) => `
@@ -1659,7 +1690,7 @@ function openNodeModal(serverId, node = null) {
 
   const initialClients = clients.map((client) => ({ ...client }));
   function clientFieldCount() {
-    const protocol = $('select[name="protocol"]')?.value;
+    const protocol = $('select[name="protocol"]')?.value || 'vless';
     if (protocol === 'vmess') return 4;
     if (protocol === 'vless' && $('select[name="security"]')?.value === 'reality') return 4;
     return 3;
@@ -1725,37 +1756,51 @@ function openNodeModal(serverId, node = null) {
     const xhttpField = $('.xhttp-field');
     const selfSignedField = $('.self-signed-field');
     const tunnelCheckbox = $('input[name="tunnel"]');
+    const isVless = protocol === 'vless';
+    const isTrojan = protocol === 'trojan';
+    const isVmess = protocol === 'vmess';
+    const isShadowsocks = protocol === 'shadowsocks';
 
     $$('.hy2-field').forEach((field) => field.style.display = isHy2 ? '' : 'none');
+    ['.ss-field', '.xhttp-field', '.tunnel-field', '.self-signed-field', '.tls-field', '.reality-field'].forEach((selector) => {
+      $$(selector).forEach((field) => { field.style.display = 'none'; });
+    });
 
     if (isHy2) {
       $('select[name="network"]').value = 'tcp';
       $('select[name="security"]').value = 'tls';
-      networkField.style.display = 'none';
-      securityField.style.display = 'none';
       sniField.style.display = '';
       if (sniLabel) sniLabel.textContent = 'SNI / serverName';
       if (pathField) pathField.style.display = 'none';
-      $$('.ss-field').forEach((field) => field.style.display = 'none');
-      $$('.tls-field').forEach((field) => field.style.display = '');
-      $$('.reality-field').forEach((field) => field.style.display = 'none');
-      if (tunnelField) tunnelField.style.display = 'none';
       if (tunnelCheckbox) tunnelCheckbox.checked = false;
-      if (xhttpField) xhttpField.style.display = 'none';
       if (selfSignedField) selfSignedField.style.display = '';
       const selfSigned = $('input[name="self_signed"]');
       if (selfSigned) selfSigned.checked = true;
       return;
     }
 
-    $$('.ss-field').forEach((field) => field.style.display = isSs ? '' : 'none');
+    networkField.style.display = 'none';
+    securityField.style.display = 'none';
 
-    const realityOption = $('select[name="security"] option[value="reality"]');
-    const canReality = protocol === 'vless' && network !== 'ws';
-    if (realityOption) realityOption.disabled = !canReality;
-    if (security === 'reality' && !canReality) {
-      $('select[name="security"]').value = 'none';
-      security = 'none';
+    if (isVless || isTrojan || isVmess) {
+      sniField.style.display = '';
+      if (sniLabel) sniLabel.textContent = tunnelCheckbox?.checked ? 'Host / 伪装域名' : 'SNI / serverName';
+      if (pathField) pathField.style.display = network === 'tcp' ? 'none' : '';
+      if (pathLabel) pathLabel.textContent = network === 'grpc' ? 'serviceName' : '路径';
+    } else if (isShadowsocks) {
+      $$('.ss-field').forEach((field) => { field.style.display = ''; });
+      if (network === 'ws') {
+        sniField.style.display = '';
+        if (sniLabel) sniLabel.textContent = 'Host / 伪装域名';
+        if (pathField) pathField.style.display = '';
+        if (pathLabel) pathLabel.textContent = '路径';
+      } else {
+        sniField.style.display = 'none';
+        if (pathField) pathField.style.display = 'none';
+      }
+    } else {
+      sniField.style.display = 'none';
+      if (pathField) pathField.style.display = 'none';
     }
 
     if (isSocks || isSs) {
@@ -1767,49 +1812,65 @@ function openNodeModal(serverId, node = null) {
         const input = $(`input[name="${name}"]`);
         if (input) input.value = '';
       });
-      networkField.style.display = 'none';
-      securityField.style.display = 'none';
-      sniField.style.display = 'none';
-      if (pathField) pathField.style.display = 'none';
-      $$('.tls-field').forEach((field) => field.style.display = 'none');
-      $$('.reality-field').forEach((field) => field.style.display = 'none');
-      if (tunnelField) tunnelField.style.display = 'none';
       if (tunnelCheckbox) tunnelCheckbox.checked = false;
-      if (xhttpField) xhttpField.style.display = 'none';
-      if (selfSignedField) selfSignedField.style.display = 'none';
       return;
     }
 
-    networkField.style.display = '';
-    securityField.style.display = '';
     const tunnelable = ['ws', 'xhttp'].includes(network);
-    if (tunnelField) tunnelField.style.display = tunnelable ? '' : 'none';
+    if (tunnelField && tunnelable) tunnelField.style.display = '';
     if (tunnelCheckbox && !tunnelable) tunnelCheckbox.checked = false;
     if (xhttpField) xhttpField.style.display = network === 'xhttp' ? '' : 'none';
-    if (selfSignedField) selfSignedField.style.display = security === 'tls' && network !== 'ws' && network !== 'xhttp' ? '' : 'none';
-    const showSni = security !== 'none' || network !== 'tcp';
-    sniField.style.display = showSni ? '' : 'none';
-    if (sniLabel) {
-      sniLabel.textContent = (network !== 'tcp' && security === 'none') || (tunnelCheckbox?.checked) ? 'Host / 伪装域名' : 'SNI / serverName';
-    }
-    if (pathLabel) {
-      pathLabel.textContent = network === 'grpc'
-        ? 'serviceName'
-        : network === 'ws' || network === 'httpupgrade' || network === 'xhttp'
-          ? '路径'
-          : '路径';
-    }
-    if (pathField) pathField.style.display = network === 'tcp' ? 'none' : '';
     $$('.tls-field').forEach((field) => field.style.display = security === 'tls' ? '' : 'none');
     $$('.reality-field').forEach((field) => field.style.display = security === 'reality' ? '' : 'none');
+    if (isVless && network === 'xhttp' && security === 'tls') {
+      if (selfSignedField) selfSignedField.style.display = '';
+      const selfSigned = $('input[name="self_signed"]');
+      if (selfSigned) selfSigned.checked = true;
+    }
+    return;
   }
 
-  applyProtocolVisibility(node?.protocol || 'vless');
+  function applyPreset(presetId = null) {
+    const preset = presetById(presetId || $('#node-preset-select')?.value || detectPreset(node).id);
+    const protocolField = $('select[name="protocol"]');
+    const networkField = $('select[name="network"]');
+    const securityField = $('select[name="security"]');
+    if (protocolField) protocolField.value = preset.protocol;
+    if (networkField) networkField.value = preset.network;
+    if (securityField) securityField.value = preset.security;
+    const tunnelCheckbox = $('input[name="tunnel"]');
+    if (tunnelCheckbox) tunnelCheckbox.checked = Boolean(preset.tunnel);
+    const selfSigned = $('input[name="self_signed"]');
+    if (selfSigned) selfSigned.checked = Boolean(preset.selfSigned);
+    const hint = $('#node-preset-hint');
+    if (hint) hint.textContent = preset.hint;
+    applyProtocolVisibility(preset.protocol);
+    return preset;
+  }
+
+  function refreshPresetOptions(role) {
+    const select = $('#node-preset-select');
+    if (!select) return;
+    const options = NODE_PRESETS.filter((preset) => (role === 'outbound' ? !preset.tunnel : !preset.outboundOnly));
+    const current = select.value;
+    select.innerHTML = options.map((preset) => `
+      <option value="${preset.id}" ${preset.id === current ? 'selected' : ''}>${escapeHtml(preset.label)}</option>
+    `).join('');
+    if (!options.some((preset) => preset.id === select.value)) {
+      select.value = options[0]?.id || '';
+    }
+  }
+
+  applyPreset(detectPreset(node).id);
 
 
   $$('#node-role-segmented button').forEach((button) => {
     button.addEventListener('click', () => {
       $$('#node-role-segmented button').forEach((item) => item.classList.toggle('active', item === button));
+      const role = button.dataset.role;
+      refreshPresetOptions(role);
+      applyPreset($('#node-preset-select')?.value);
+      renderClientRows();
     });
   });
 
@@ -1839,7 +1900,7 @@ function openNodeModal(serverId, node = null) {
   const bulkGenButton = $('#bulk-gen-clients-btn');
   if (bulkGenButton) {
     bulkGenButton.addEventListener('click', () => {
-      const protocol = $('select[name="protocol"]')?.value || 'vless';
+      const protocol = presetById($('#node-preset-select')?.value).protocol;
       const rows = $$('#clients-editor .client-row');
       const current = rows.length
         ? rows.map((row) => ({
@@ -1948,19 +2009,13 @@ function openNodeModal(serverId, node = null) {
   const securitySelect = $('select[name="security"]');
   const networkSelect = $('select[name="network"]');
   const protocolSelect = $('select[name="protocol"]');
-  securitySelect.addEventListener('change', () => applyProtocolVisibility(protocolSelect.value));
-  securitySelect.addEventListener('change', () => {
-    applyProtocolVisibility(protocolSelect.value);
-    if (protocolSelect.value === 'vless') renderClientRows();
-  });
-  networkSelect.addEventListener('change', () => {
-    applyProtocolVisibility(protocolSelect.value);
-    if (protocolSelect.value === 'vless') renderClientRows();
-  });
-  protocolSelect.addEventListener('change', () => {
-    applyProtocolVisibility(protocolSelect.value);
-    renderClientRows();
-  });
+  const nodePresetSelect = $('#node-preset-select');
+  if (nodePresetSelect) {
+    nodePresetSelect.addEventListener('change', () => {
+      applyPreset(nodePresetSelect.value);
+      renderClientRows();
+    });
+  }
   const tunnelCheckboxEl = $('input[name="tunnel"]');
   if (tunnelCheckboxEl) {
     tunnelCheckboxEl.addEventListener('change', () => {
@@ -1977,6 +2032,10 @@ function openNodeModal(serverId, node = null) {
     if (!targetServerId) throw new Error('请选择使用的服务器');
     const data = Object.fromEntries(new FormData(form).entries());
     data.role = $('#node-role-segmented button.active').dataset.role;
+    const preset = presetById(data.preset || detectPreset(node).id);
+    data.protocol = preset.protocol;
+    data.network = preset.network;
+    data.security = preset.security;
     data.port = Number(data.port);
     data.enabled = form.querySelector('[name="enabled"]').checked;
     data.clients = $$('#clients-editor .client-row').map((row) => ({
@@ -1987,8 +2046,8 @@ function openNodeModal(serverId, node = null) {
     }));
     data.method = form.querySelector('[name="method"]')?.value || 'aes-256-gcm';
     data.ss_network = form.querySelector('[name="ss_network"]')?.value || 'tcp';
-    data.tunnel = Boolean(form.querySelector('[name="tunnel"]')?.checked);
-    data.self_signed = Boolean(form.querySelector('[name="self_signed"]')?.checked);
+    data.tunnel = Boolean(form.querySelector('[name="tunnel"]')?.checked) && Boolean(preset.tunnel);
+    data.self_signed = Boolean(form.querySelector('[name="self_signed"]')?.checked) || Boolean(preset.selfSigned);
     data.xhttp_mode = form.querySelector('[name="xhttp_mode"]')?.value || '';
     data.hy2_up = Number(form.querySelector('[name="hy2_up"]')?.value || 0);
     data.hy2_down = Number(form.querySelector('[name="hy2_down"]')?.value || 0);
@@ -2003,6 +2062,9 @@ function openNodeModal(serverId, node = null) {
       data.security = 'tls';
       data.self_signed = true;
       data.tunnel = false;
+    }
+    if (data.protocol === 'shadowsocks') {
+      data.network = preset.network || 'tcp';
     }
     data.server_id = targetServerId;
     try {

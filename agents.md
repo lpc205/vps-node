@@ -215,8 +215,9 @@ docker-compose.fnos.yml  飞牛 NAS host 网络部署配置（NAS 目录中维�
 ### 添加并部署节点
 
 1. “节点”页选择目标服务器。
-2. 添加节点：选择协议、角色、端口、传输、安全等字段。
-   - 表单会按协议显示对应字段：VMess 显示客户端加密方式；VLESS / Trojan + Reality 显示 flow（仅 VLESS）；Shadowsocks 显示加密方式和 TCP/UDP 网络；SOCKS5 只保留用户名/密码。
+2. 添加节点：先选“部署组合”，面板按 ArgoX 的组合预设自动锁定协议、传输与安全，只显示该组合还需要填写的字段。
+   - 13 个预设：VLESS + Reality Vision、VLESS + gRPC + Reality、VLESS + WebSocket、VMess + WebSocket、Trojan + WebSocket、Shadowsocks + WebSocket、VLESS + XHTTP (CDN)、VLESS + XHTTP H2 + Reality、VLESS + XHTTP H3（自签）、Hysteria2（自签）、Trojan Direct（自签）、Shadowsocks 2022 Direct、SOCKS5（仅出站）。
+   - 隧道类组合自动勾选“通过 Argo 隧道对外”；自签类组合自动使用面板生成的自签证书；Reality 类组合显示伪装站点、目标、密钥对等字段。
 3. 节点可配置多个客户端，客户端 secret 自动生成。
 4. 点击“部署全部节点”：调用 `/api/servers/:id/deploy`，流程为安装 Xray → 写入 config → 重启 → 查询状态。
 5. 部署期间显示进度弹窗，完成后显示结果弹窗。
