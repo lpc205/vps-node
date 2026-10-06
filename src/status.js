@@ -15,7 +15,9 @@ import { tunnelRequired, withSelfSignedPaths } from './argo.js';
 
 const DEFAULT_INTERVAL_SECONDS = 60;
 const DEFAULT_CONCURRENCY = 3;
-const MAX_BACKOFF_MS = 30 * 60 * 1000;
+const MAX_BACKOFF_MS = 10 * 60 * 1000;
+const CHECK_TIMEOUT_MS = 60 * 1000;
+const SLOW_CHECK_MS = 20 * 1000;
 
 export function getStatusIntervalSeconds() {
   const raw = Number(process.env.PANEL_STATUS_INTERVAL);
@@ -118,55 +120,84 @@ function drain() {
 
 function nextCheckFor(cached, failed) {
   const intervalMs = getStatusIntervalSeconds() * 1000;
-  const failures = (cached?.failure_count || 0) + (failed ? 1 : 0);
-  const delayMs = failed
-    ? Math.min(intervalMs * (2 ** (failures - 1)), MAX_BACKOFF_MS)
-    : intervalMs;
+  if (!failed) {
+    return { failures: 0, nextCheckAt: new Date(Date.now() + intervalMs).toISOString() };
+  }
+  const failures = (cached?.failure_count || 0) + 1;
+  const delayMs = Math.min(intervalMs * (2 ** (failures - 1)), MAX_BACKOFF_MS);
   return { failures, nextCheckAt: new Date(Date.now() + delayMs).toISOString() };
+}
+
+function withTimeout(promise, ms, message) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+    if (timer.unref) timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 async function checkServer(server) {
   if (inFlight.has(server.id)) return;
   inFlight.add(server.id);
+  const startedAt = Date.now();
   const cached = getServerStatus(server.id);
   const previousState = deriveServerState(cached);
   let result = null;
   let thrownError = '';
+  let serverRecord = null;
   try {
-    const record = getServerRecord(server.id);
-    if (!record) return;
-    result = await xrayStatus(record, listNodes(server.id), { timeout: 15000 });
+    serverRecord = getServerRecord(server.id);
+    if (!serverRecord) return;
+    result = await withTimeout(
+      xrayStatus(serverRecord, listNodes(server.id), { timeout: 15000 }),
+      CHECK_TIMEOUT_MS,
+      '状态巡检超时（60秒）'
+    );
   } catch (error) {
     thrownError = error?.message || String(error);
   } finally {
     inFlight.delete(server.id);
   }
 
+  const elapsed = Date.now() - startedAt;
+  if (elapsed >= SLOW_CHECK_MS) {
+    console.warn(`[status] server=${server.name} slow check ${elapsed}ms${thrownError ? ` error=${thrownError}` : ''}`);
+  }
+
   const failed = !result?.ok || !result?.ssh?.connected;
   const { failures, nextCheckAt } = nextCheckFor(cached, failed);
 
-  const record = failed
-    ? {
-        ssh_reachable: 0,
-        xray_installed: 0,
-        xray_bin_present: 0,
-        service_active: 0,
-        config_present: 0,
-        config_match: 0,
-        ports_listening: 0,
-        last_checked_at: new Date().toISOString(),
-        last_error: result?.ssh?.error || thrownError || 'SSH 检查失败',
-        node_status: []
-      }
-    : buildStatusRecord(result, expectedConfigSha256(server.id), {
-        tunnelRequired: tunnelRequired(record, listNodes(server.id))
-      });
+  let record;
+  try {
+    record = failed
+      ? {
+          ssh_reachable: 0,
+          xray_installed: 0,
+          xray_bin_present: 0,
+          service_active: 0,
+          config_present: 0,
+          config_match: 0,
+          ports_listening: 0,
+          last_checked_at: new Date().toISOString(),
+          last_error: result?.ssh?.error || thrownError || 'SSH 检查失败',
+          node_status: []
+        }
+      : buildStatusRecord(result, expectedConfigSha256(server.id), {
+          tunnelRequired: tunnelRequired(serverRecord, listNodes(server.id))
+        });
 
-  upsertServerStatus(server.id, {
-    ...record,
-    failure_count: failures,
-    next_check_at: nextCheckAt
-  });
+    upsertServerStatus(server.id, {
+      ...record,
+      failure_count: failures,
+      next_check_at: nextCheckAt
+    });
+  } catch (error) {
+    console.error(`[status] server=${server.name} persist failed: ${error?.message || error}`);
+    return;
+  }
 
   const currentState = deriveServerState(record);
   if (failed || currentState !== previousState) {

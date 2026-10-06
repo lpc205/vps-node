@@ -251,7 +251,8 @@ docker-compose.fnos.yml  飞牛 NAS host 网络部署配置（NAS 目录中维�
 
 1. `src/index.js` 启动时调用 `startStatusSweeper()`，默认每 60 秒巡检一轮（`PANEL_STATUS_INTERVAL` 秒）。
 2. 每台服务器错峰入队，并发上限默认 3（`PANEL_STATUS_CONCURRENCY`），单次 SSH 超时 15 秒。
-3. 巡检失败按指数退避：失败次数 n 时下次间隔为 `interval * 2^(n-1)`，上限 30 分钟；成功后恢复固定间隔。
+3. 巡检失败按指数退避：失败次数 n 时下次间隔为 `interval * 2^(n-1)`，上限 10 分钟；巡检成功后失败计数清零并恢复固定间隔。
+   - 单次巡检有 60 秒硬超时看门狗，避免个别 SSH 检查挂起把整个巡检队列卡死；超时按失败记录并写入 `[status] ... slow check` / 错误日志。
 4. 配置一致性：本地用 `buildXrayConfig` 生成期望配置并计算 sha256，与 VPS 实际 `config.json` sha256 比对，结果写入 `config_match`。
 5. `GET /api/status` 聚合返回每台服务器的派生状态与节点快照；前端每 20 秒轮询并刷新状态点。
 6. 派生状态：`running / service_stopped / offline / config_mismatch / config_missing / binary_missing / ports_down / unknown`。
@@ -359,6 +360,7 @@ NAS 使用 host 网络，因此容器内 SSH 出站连接使用 NAS 主机网络
 - 自动巡检写入 `server_status` 缓存；`GET /api/status` 只读缓存，不触发新的 SSH 检查。
 - 配置一致性用 sha256 比对：本地 `JSON.stringify(buildXrayConfig(...), null, 2)` 与 VPS 原始文件字节一致才算匹配。
 - 巡检失败会把 `failure_count` 递增并指数退避，成功时清零；`next_check_at` 控制错峰与重试节奏。
+- 巡检调度带 60 秒硬超时和失败计数清零：单台检查最多占用一个并发位 60 秒，避免队列被挂起任务堵死；状态写入失败会打印 `[status] ... persist failed` 日志。
 - 漂移状态与修复动作一一映射，服务停止只 `restartXray`，配置类漂移才重写配置，二进制缺失走 `deployServer` 整机重部署。
 - 修复必须先确认：前端确认弹窗展示服务器、漂移类型和远程操作摘要；后端拒绝离线/无漂移请求。
 - “自动修复”开关默认关闭（localStorage 持久化），开启后仅自动弹出服务停止类确认框，绝不绕过确认执行。
