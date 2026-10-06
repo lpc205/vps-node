@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS servers (
   private_key TEXT NOT NULL DEFAULT '',
   passphrase TEXT NOT NULL DEFAULT '',
   sudo_password TEXT NOT NULL DEFAULT '',
+  argo_mode TEXT NOT NULL DEFAULT 'none',
+  argo_token TEXT NOT NULL DEFAULT '',
+  argo_json TEXT NOT NULL DEFAULT '',
+  argo_domain TEXT NOT NULL DEFAULT '',
+  nginx_port INTEGER NOT NULL DEFAULT 0,
   notes TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -50,6 +55,11 @@ CREATE TABLE IF NOT EXISTS nodes (
   private_key TEXT NOT NULL DEFAULT '',
   public_key TEXT NOT NULL DEFAULT '',
   short_ids TEXT NOT NULL DEFAULT '',
+  tunnel INTEGER NOT NULL DEFAULT 0,
+  xhttp_mode TEXT NOT NULL DEFAULT '',
+  self_signed INTEGER NOT NULL DEFAULT 0,
+  hy2_up INTEGER NOT NULL DEFAULT 0,
+  hy2_down INTEGER NOT NULL DEFAULT 0,
   clients_json TEXT NOT NULL DEFAULT '[]',
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
@@ -80,6 +90,9 @@ CREATE TABLE IF NOT EXISTS server_status (
   config_present INTEGER NOT NULL DEFAULT 0,
   config_match INTEGER NOT NULL DEFAULT 0,
   ports_listening INTEGER NOT NULL DEFAULT 0,
+  tunnel_required INTEGER NOT NULL DEFAULT 0,
+  tunnel_cloudflared_present INTEGER NOT NULL DEFAULT 0,
+  tunnel_active INTEGER NOT NULL DEFAULT 0,
   last_checked_at TEXT,
   last_error TEXT NOT NULL DEFAULT '',
   node_status_json TEXT NOT NULL DEFAULT '[]',
@@ -130,6 +143,38 @@ if (!nodeColumns.some((column) => column.name === 'method')) {
 if (!nodeColumns.some((column) => column.name === 'ss_network')) {
   db.exec("ALTER TABLE nodes ADD COLUMN ss_network TEXT NOT NULL DEFAULT 'tcp'");
 }
+if (!nodeColumns.some((column) => column.name === 'tunnel')) {
+  db.exec('ALTER TABLE nodes ADD COLUMN tunnel INTEGER NOT NULL DEFAULT 0');
+}
+if (!nodeColumns.some((column) => column.name === 'xhttp_mode')) {
+  db.exec("ALTER TABLE nodes ADD COLUMN xhttp_mode TEXT NOT NULL DEFAULT ''");
+}
+if (!nodeColumns.some((column) => column.name === 'self_signed')) {
+  db.exec('ALTER TABLE nodes ADD COLUMN self_signed INTEGER NOT NULL DEFAULT 0');
+}
+if (!nodeColumns.some((column) => column.name === 'hy2_up')) {
+  db.exec('ALTER TABLE nodes ADD COLUMN hy2_up INTEGER NOT NULL DEFAULT 0');
+}
+if (!nodeColumns.some((column) => column.name === 'hy2_down')) {
+  db.exec('ALTER TABLE nodes ADD COLUMN hy2_down INTEGER NOT NULL DEFAULT 0');
+}
+
+const serverColumns = db.prepare('PRAGMA table_info(servers)').all();
+if (!serverColumns.some((column) => column.name === 'argo_mode')) {
+  db.exec("ALTER TABLE servers ADD COLUMN argo_mode TEXT NOT NULL DEFAULT 'none'");
+}
+if (!serverColumns.some((column) => column.name === 'argo_token')) {
+  db.exec("ALTER TABLE servers ADD COLUMN argo_token TEXT NOT NULL DEFAULT ''");
+}
+if (!serverColumns.some((column) => column.name === 'argo_json')) {
+  db.exec("ALTER TABLE servers ADD COLUMN argo_json TEXT NOT NULL DEFAULT ''");
+}
+if (!serverColumns.some((column) => column.name === 'argo_domain')) {
+  db.exec("ALTER TABLE servers ADD COLUMN argo_domain TEXT NOT NULL DEFAULT ''");
+}
+if (!serverColumns.some((column) => column.name === 'nginx_port')) {
+  db.exec('ALTER TABLE servers ADD COLUMN nginx_port INTEGER NOT NULL DEFAULT 0');
+}
 
 const statusColumns = db.prepare('PRAGMA table_info(server_status)').all();
 if (!statusColumns.some((column) => column.name === 'xray_bin_present')) {
@@ -137,6 +182,15 @@ if (!statusColumns.some((column) => column.name === 'xray_bin_present')) {
   db.exec('UPDATE server_status SET xray_bin_present = xray_installed');
 }
 db.exec('UPDATE server_status SET xray_bin_present = xray_installed WHERE xray_bin_present = 0 AND xray_installed = 1');
+if (!statusColumns.some((column) => column.name === 'tunnel_required')) {
+  db.exec('ALTER TABLE server_status ADD COLUMN tunnel_required INTEGER NOT NULL DEFAULT 0');
+}
+if (!statusColumns.some((column) => column.name === 'tunnel_cloudflared_present')) {
+  db.exec('ALTER TABLE server_status ADD COLUMN tunnel_cloudflared_present INTEGER NOT NULL DEFAULT 0');
+}
+if (!statusColumns.some((column) => column.name === 'tunnel_active')) {
+  db.exec('ALTER TABLE server_status ADD COLUMN tunnel_active INTEGER NOT NULL DEFAULT 0');
+}
 
 const subscriptionColumns = db.prepare('PRAGMA table_info(subscriptions)').all();
 if (!subscriptionColumns.some((column) => column.name === 'token_ciphertext')) {
@@ -159,13 +213,15 @@ const now = () => new Date().toISOString();
 
 function publicServer(row) {
   if (!row) return null;
-  const { password, private_key, passphrase, sudo_password, ...safe } = row;
+  const { password, private_key, passphrase, sudo_password, argo_token, argo_json, ...safe } = row;
   return {
     ...safe,
     has_password: Boolean(password),
     has_private_key: Boolean(private_key),
     has_passphrase: Boolean(passphrase),
-    has_sudo_password: Boolean(sudo_password)
+    has_sudo_password: Boolean(sudo_password),
+    has_argo_token: Boolean(argo_token),
+    has_argo_json: Boolean(argo_json)
   };
 }
 
@@ -186,6 +242,14 @@ export function getServerPublic(id) {
   return publicServer(getServerRecord(id));
 }
 
+export function updateServerArgoDomain(id, domain) {
+  const value = String(domain || '').trim();
+  if (!value) return getServerPublic(id);
+  db.prepare('UPDATE servers SET argo_domain = ?, updated_at = ? WHERE id = ?')
+    .run(value, now(), id);
+  return getServerPublic(id);
+}
+
 export function saveServer(input, id = null) {
   const existing = id ? getServerRecord(id) : null;
   const timestamp = now();
@@ -203,6 +267,18 @@ export function saveServer(input, id = null) {
     ? encryptText(input.sudo_password)
     : (existing && !input.clear_sudo_password ? existing.sudo_password : '');
 
+  const argoMode = ['none', 'quick', 'token', 'json'].includes(String(input.argo_mode || ''))
+    ? String(input.argo_mode)
+    : (existing?.argo_mode || 'none');
+  const argoToken = input.argo_token
+    ? encryptText(input.argo_token)
+    : (existing && !input.clear_argo_token ? existing.argo_token : '');
+  const argoJson = input.argo_json
+    ? encryptText(input.argo_json)
+    : (existing && !input.clear_argo_json ? existing.argo_json : '');
+  const argoDomain = String(input.argo_domain ?? existing?.argo_domain ?? '').trim();
+  const nginxPortRaw = Number(input.nginx_port ?? existing?.nginx_port ?? 0);
+
   const data = {
     name: String(input.name || '').trim(),
     host: String(input.host || '').trim(),
@@ -213,6 +289,11 @@ export function saveServer(input, id = null) {
     private_key: privateKey,
     passphrase,
     sudo_password: sudoPassword,
+    argo_mode: argoMode,
+    argo_token: argoToken,
+    argo_json: argoJson,
+    argo_domain: argoDomain,
+    nginx_port: Number.isInteger(nginxPortRaw) && nginxPortRaw >= 0 && nginxPortRaw <= 65535 ? nginxPortRaw : 0,
     notes: String(input.notes || '').trim()
   };
 
@@ -231,16 +312,33 @@ export function saveServer(input, id = null) {
     error.status = 400;
     throw error;
   }
+  if (data.argo_mode === 'token' && !data.argo_token) {
+    const error = new Error('argo token is required for token tunnel');
+    error.status = 400;
+    throw error;
+  }
+  if (data.argo_mode === 'json' && !data.argo_json) {
+    const error = new Error('argo credentials json is required for json tunnel');
+    error.status = 400;
+    throw error;
+  }
+  if (['token', 'json'].includes(data.argo_mode) && !data.argo_domain) {
+    const error = new Error('argo domain is required for fixed tunnels');
+    error.status = 400;
+    throw error;
+  }
 
   if (existing) {
     db.prepare(`
       UPDATE servers SET
         name = ?, host = ?, port = ?, username = ?, auth_type = ?,
         password = ?, private_key = ?, passphrase = ?, sudo_password = ?,
+        argo_mode = ?, argo_token = ?, argo_json = ?, argo_domain = ?, nginx_port = ?,
         notes = ?, updated_at = ?
       WHERE id = ?
     `).run(data.name, data.host, data.port, data.username, data.auth_type,
       data.password, data.private_key, data.passphrase, data.sudo_password,
+      data.argo_mode, data.argo_token, data.argo_json, data.argo_domain, data.nginx_port,
       data.notes, timestamp, id);
     return getServerPublic(id);
   }
@@ -248,10 +346,12 @@ export function saveServer(input, id = null) {
   const serverId = newId();
   db.prepare(`
     INSERT INTO servers
-      (id, name, host, port, username, auth_type, password, private_key, passphrase, sudo_password, notes, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, name, host, port, username, auth_type, password, private_key, passphrase, sudo_password,
+       argo_mode, argo_token, argo_json, argo_domain, nginx_port, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(serverId, data.name, data.host, data.port, data.username, data.auth_type,
     data.password, data.private_key, data.passphrase, data.sudo_password,
+    data.argo_mode, data.argo_token, data.argo_json, data.argo_domain, data.nginx_port,
     data.notes, timestamp, timestamp);
   return getServerPublic(serverId);
 }
@@ -306,8 +406,12 @@ export function saveNode(input, id = null) {
   const timestamp = now();
   const protocol = String(input.protocol || '').trim();
   const role = input.role === 'outbound' ? 'outbound' : 'inbound';
-  const network = String(input.network || 'tcp').trim();
-  const security = String(input.security || 'none').trim();
+  let network = String(input.network || 'tcp').trim();
+  let security = String(input.security || 'none').trim();
+  if (protocol === 'hysteria2') {
+    network = 'tcp';
+    security = 'tls';
+  }
   const port = Number(input.port);
   const SS_METHODS = [
     'aes-128-gcm',
@@ -321,8 +425,10 @@ export function saveNode(input, id = null) {
   ];
   const method = protocol === 'shadowsocks' && SS_METHODS.includes(String(input.method || '')) ? String(input.method) : 'aes-256-gcm';
   const ssNetwork = protocol === 'shadowsocks' && ['tcp', 'udp', 'tcp,udp'].includes(String(input.ss_network || '')) ? String(input.ss_network) : 'tcp';
+  const tunnel = (input.tunnel === true || input.tunnel === 1) && ['ws', 'xhttp'].includes(network) && protocol !== 'hysteria2' ? 1 : 0;
+  if (tunnel) security = 'none';
 
-  if (!['vmess', 'vless', 'trojan', 'shadowsocks', 'socks'].includes(protocol)) {
+  if (!['vmess', 'vless', 'trojan', 'shadowsocks', 'socks', 'hysteria2'].includes(protocol)) {
     const error = new Error('unsupported protocol');
     error.status = 400;
     throw error;
@@ -332,7 +438,7 @@ export function saveNode(input, id = null) {
     error.status = 400;
     throw error;
   }
-  if (!['tcp', 'ws', 'grpc', 'httpupgrade'].includes(network)) {
+  if (!['tcp', 'ws', 'grpc', 'httpupgrade', 'xhttp'].includes(network)) {
     const error = new Error('unsupported network');
     error.status = 400;
     throw error;
@@ -359,13 +465,20 @@ export function saveNode(input, id = null) {
     ss_network: ssNetwork,
     sni: String(input.sni || input.server_name || '').trim(),
     path: String(input.path || '').trim(),
-    cert_file: String(input.cert_file || '').trim(),
-    key_file: String(input.key_file || '').trim(),
+    cert_file: tunnel ? '' : String(input.cert_file || '').trim(),
+    key_file: tunnel ? '' : String(input.key_file || '').trim(),
     dest: String(input.dest || '').trim(),
     server_names: String(input.server_names || '').trim(),
     private_key: String(input.private_key || '').trim(),
     public_key: String(input.public_key || '').trim(),
     short_ids: String(input.short_ids || '').trim(),
+    tunnel,
+    xhttp_mode: ['auto', 'packet-up', 'stream-up', 'stream-one'].includes(String(input.xhttp_mode || ''))
+      ? String(input.xhttp_mode)
+      : '',
+    self_signed: input.self_signed === true || input.self_signed === 1 ? 1 : 0,
+    hy2_up: Math.max(0, Math.min(100000, Number(input.hy2_up) || 0)),
+    hy2_down: Math.max(0, Math.min(100000, Number(input.hy2_down) || 0)),
     clients_json: JSON.stringify(normalizeClients(input.clients)),
     enabled: input.enabled === false || input.enabled === 0 ? 0 : 1
   };
@@ -374,6 +487,19 @@ export function saveNode(input, id = null) {
     const error = new Error('node name is required');
     error.status = 400;
     throw error;
+  }
+  if (data.tunnel && !['ws', 'xhttp'].includes(network)) {
+    const error = new Error('tunnel is only supported on ws or xhttp transports');
+    error.status = 400;
+    throw error;
+  }
+  if (data.tunnel) {
+    const targetServer = getServerRecord(String(input.server_id || existing?.server_id || ''));
+    if (!targetServer || targetServer.argo_mode === 'none') {
+      const error = new Error('请先在服务器上配置 Argo 隧道，再启用节点的隧道模式');
+      error.status = 400;
+      throw error;
+    }
   }
 
   if (existing) {
@@ -385,13 +511,15 @@ export function saveNode(input, id = null) {
         server_id = ?, name = ?, protocol = ?, role = ?, port = ?, network = ?,
         security = ?, method = ?, ss_network = ?, sni = ?, path = ?,
         cert_file = ?, key_file = ?, dest = ?, server_names = ?, private_key = ?,
-        short_ids = ?, public_key = ?,
+        short_ids = ?, public_key = ?, tunnel = ?, xhttp_mode = ?, self_signed = ?,
+        hy2_up = ?, hy2_down = ?,
         clients_json = ?, enabled = ?, updated_at = ?
       WHERE id = ?
     `).run(existing.server_id, data.name, data.protocol, data.role, data.port, data.network,
       data.security, data.method, data.ss_network, data.sni, data.path,
       data.cert_file, data.key_file, data.dest, data.server_names, data.private_key,
-      data.short_ids, data.public_key,
+      data.short_ids, data.public_key, data.tunnel, data.xhttp_mode, data.self_signed,
+      data.hy2_up, data.hy2_down,
       data.clients_json, data.enabled, timestamp, id);
     return getNode(id);
   }
@@ -401,13 +529,14 @@ export function saveNode(input, id = null) {
     INSERT INTO nodes
       (id, server_id, name, protocol, role, port, network, security, method,
        ss_network, sni, path, cert_file, key_file, dest, server_names,
-       private_key, short_ids, public_key,
+       private_key, short_ids, public_key, tunnel, xhttp_mode, self_signed, hy2_up, hy2_down,
        clients_json, enabled, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(nodeId, input.server_id, data.name, data.protocol, data.role, data.port, data.network,
     data.security, data.method, data.ss_network, data.sni, data.path,
     data.cert_file, data.key_file, data.dest, data.server_names,
-    data.private_key, data.short_ids, data.public_key,
+    data.private_key, data.short_ids, data.public_key, data.tunnel, data.xhttp_mode,
+    data.self_signed, data.hy2_up, data.hy2_down,
     data.clients_json, data.enabled, timestamp, timestamp);
   return getNode(nodeId);
 }
@@ -597,6 +726,9 @@ export function upsertServerStatus(serverId, status) {
     config_present: status.config_present ? 1 : 0,
     config_match: status.config_match ? 1 : 0,
     ports_listening: status.ports_listening ? 1 : 0,
+    tunnel_required: status.tunnel_required ? 1 : 0,
+    tunnel_cloudflared_present: status.tunnel_cloudflared_present ? 1 : 0,
+    tunnel_active: status.tunnel_active ? 1 : 0,
     last_checked_at: status.last_checked_at || timestamp,
     last_error: String(status.last_error || ''),
     node_status_json: JSON.stringify(status.node_status || []),
@@ -607,9 +739,10 @@ export function upsertServerStatus(serverId, status) {
   db.prepare(`
     INSERT INTO server_status (
       server_id, ssh_reachable, xray_installed, xray_bin_present, service_active, config_present,
-      config_match, ports_listening, last_checked_at, last_error, node_status_json,
+      config_match, ports_listening, tunnel_required, tunnel_cloudflared_present, tunnel_active,
+      last_checked_at, last_error, node_status_json,
       failure_count, next_check_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(server_id) DO UPDATE SET
       ssh_reachable = excluded.ssh_reachable,
       xray_installed = excluded.xray_installed,
@@ -618,6 +751,9 @@ export function upsertServerStatus(serverId, status) {
       config_present = excluded.config_present,
       config_match = excluded.config_match,
       ports_listening = excluded.ports_listening,
+      tunnel_required = excluded.tunnel_required,
+      tunnel_cloudflared_present = excluded.tunnel_cloudflared_present,
+      tunnel_active = excluded.tunnel_active,
       last_checked_at = excluded.last_checked_at,
       last_error = excluded.last_error,
       node_status_json = excluded.node_status_json,
@@ -625,7 +761,8 @@ export function upsertServerStatus(serverId, status) {
       next_check_at = excluded.next_check_at,
       updated_at = excluded.updated_at
   `).run(serverId, data.ssh_reachable, data.xray_installed, data.xray_bin_present, data.service_active, data.config_present,
-    data.config_match, data.ports_listening, data.last_checked_at, data.last_error, data.node_status_json,
+    data.config_match, data.ports_listening, data.tunnel_required, data.tunnel_cloudflared_present, data.tunnel_active,
+    data.last_checked_at, data.last_error, data.node_status_json,
     data.failure_count, data.next_check_at, data.updated_at);
   return getServerStatus(serverId);
 }

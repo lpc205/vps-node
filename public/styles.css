@@ -1258,6 +1258,15 @@ textarea {
   font-size: 12px;
 }
 
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .form-section {
   display: grid;
   gap: 14px;

@@ -11,6 +11,7 @@ import {
 } from './db.js';
 import { xrayStatus } from './remote.js';
 import { buildXrayConfig } from './xray.js';
+import { tunnelRequired, withSelfSignedPaths } from './argo.js';
 
 const DEFAULT_INTERVAL_SECONDS = 60;
 const DEFAULT_CONCURRENCY = 3;
@@ -33,18 +34,19 @@ export function deriveServerState(status) {
   if (!status.config_present) return 'config_missing';
   if (!status.config_match) return 'config_mismatch';
   if (!status.service_active) return 'service_stopped';
+  if (status.tunnel_required && (!status.tunnel_cloudflared_present || !status.tunnel_active)) return 'tunnel_down';
   if (!status.ports_listening) return 'ports_down';
   return 'running';
 }
 
-const DRIFT_TYPES = ['service_stopped', 'config_missing', 'config_mismatch', 'binary_missing'];
+const DRIFT_TYPES = ['service_stopped', 'config_missing', 'config_mismatch', 'binary_missing', 'tunnel_down'];
 
 export function deriveDriftType(status) {
   const state = deriveServerState(status);
   return DRIFT_TYPES.includes(state) ? state : null;
 }
 
-export function buildStatusRecord(result, expectedSha) {
+export function buildStatusRecord(result, expectedSha, options = {}) {
   const sshReachable = Boolean(result?.ssh?.connected);
   const installed = Boolean(result?.xray?.installed);
   const serviceActive = Boolean(result?.xray?.running);
@@ -56,6 +58,10 @@ export function buildStatusRecord(result, expectedSha) {
     ? 1
     : enabledNodes.every((node) => node.listening) ? 1 : 0;
   const binPresent = Boolean(result?.xray?.bin_present);
+  const tunnelRequiredFlag = Boolean(options.tunnelRequired);
+  const tunnel = result?.tunnel || {};
+  const tunnelCloudflaredPresent = Boolean(tunnel.cloudflared_present);
+  const tunnelActive = ['active', 'started'].includes(tunnel.argo_active);
 
   return {
     ssh_reachable: sshReachable ? 1 : 0,
@@ -65,6 +71,9 @@ export function buildStatusRecord(result, expectedSha) {
     config_present: configPresent ? 1 : 0,
     config_match: configMatch ? 1 : 0,
     ports_listening: portsListening ? 1 : 0,
+    tunnel_required: tunnelRequiredFlag ? 1 : 0,
+    tunnel_cloudflared_present: tunnelCloudflaredPresent ? 1 : 0,
+    tunnel_active: tunnelActive ? 1 : 0,
     last_checked_at: result?.checked_at || new Date().toISOString(),
     last_error: sshReachable ? '' : (result?.ssh?.error || 'SSH 不可达'),
     node_status: nodeStatus
@@ -81,7 +90,7 @@ export function expectedConfigSha256(serverId) {
       outbound_server: outboundNode ? getServerPublic(outboundNode.server_id) : null
     };
   }).filter((route) => route.outbound_node && route.outbound_server);
-  const config = buildXrayConfig(nodes, routes);
+  const config = buildXrayConfig(withSelfSignedPaths(nodes), routes);
   return createHash('sha256').update(JSON.stringify(config, null, 2)).digest('hex');
 }
 
@@ -149,7 +158,9 @@ async function checkServer(server) {
         last_error: result?.ssh?.error || thrownError || 'SSH 检查失败',
         node_status: []
       }
-    : buildStatusRecord(result, expectedConfigSha256(server.id));
+    : buildStatusRecord(result, expectedConfigSha256(server.id), {
+        tunnelRequired: tunnelRequired(record, listNodes(server.id))
+      });
 
   upsertServerStatus(server.id, {
     ...record,

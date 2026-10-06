@@ -11,20 +11,56 @@ export function canUseReality(protocol, network) {
   return protocol === 'vless' && network !== 'ws';
 }
 
-function buildStreamSettings(node) {
+export function isTunnelNode(node) {
+  return Boolean(node?.tunnel) && ['ws', 'xhttp'].includes(node?.network);
+}
+
+export function isSelfSignedNode(node) {
+  return Boolean(node?.self_signed) || (node?.protocol === 'hysteria2');
+}
+
+function wsSettings(node) {
+  const settings = {
+    path: node.path || '/'
+  };
+  if (node.sni && !isTunnelNode(node)) settings.headers = { Host: node.sni };
+  return settings;
+}
+
+function xhttpSettings(node) {
+  const settings = {
+    mode: node.xhttp_mode || 'auto',
+    path: node.path || '/'
+  };
+  if (node.sni && !isTunnelNode(node)) settings.host = node.sni;
+  return settings;
+}
+
+function streamFor(node, { inbound = true } = {}) {
   const stream = {
     network: node.network,
     security: node.security || 'none'
   };
 
-  if (node.network === 'ws') {
-    stream.wsSettings = {
-      path: node.path || '/',
-      headers: {
-        Host: node.sni || ''
+  if (node.protocol === 'hysteria2') {
+    return {
+      network: 'hysteria',
+      security: 'tls',
+      tlsSettings: {
+        serverName: node.sni || '',
+        alpn: ['h3'],
+        certificates: [
+          {
+            certificateFile: node.cert_file || '/usr/local/etc/xray/cert/cert.pem',
+            keyFile: node.key_file || '/usr/local/etc/xray/cert/private.key'
+          }
+        ]
       }
     };
   }
+
+  if (node.network === 'ws') stream.wsSettings = wsSettings(node);
+  if (node.network === 'xhttp') stream.xhttpSettings = xhttpSettings(node);
   if (node.network === 'grpc') {
     stream.grpcSettings = {
       serviceName: node.path || 'grpc'
@@ -37,73 +73,53 @@ function buildStreamSettings(node) {
   }
 
   if (node.security === 'tls') {
-    stream.tlsSettings = {
-      serverName: node.sni || '',
-      certificates: [
-        {
-          certificateFile: node.cert_file,
-          keyFile: node.key_file
-        }
-      ]
-    };
+    if (inbound) {
+      stream.tlsSettings = {
+        serverName: node.sni || '',
+        alpn: node.protocol === 'hysteria2' ? ['h3'] : undefined,
+        certificates: [
+          {
+            certificateFile: node.cert_file || '/usr/local/etc/xray/cert/cert.pem',
+            keyFile: node.key_file || '/usr/local/etc/xray/cert/private.key'
+          }
+        ]
+      };
+    } else {
+      stream.tlsSettings = {
+        serverName: node.sni || '',
+        allowInsecure: false,
+        fingerprint: 'chrome'
+      };
+    }
   }
 
   if (node.security === 'reality') {
-    stream.realitySettings = {
-      show: false,
-      dest: node.dest || 'www.microsoft.com:443',
-      xver: 0,
-      serverNames: splitList(node.server_names),
-      privateKey: node.private_key,
-      shortIds: splitList(node.short_ids).length ? splitList(node.short_ids) : ['']
-    };
+    if (inbound) {
+      stream.realitySettings = {
+        show: false,
+        dest: node.dest || 'www.microsoft.com:443',
+        xver: 0,
+        serverNames: splitList(node.server_names),
+        privateKey: node.private_key,
+        shortIds: splitList(node.short_ids).length ? splitList(node.short_ids) : [''],
+        ...(node.network === 'xhttp' ? { alpn: ['h2'] } : {})
+      };
+    } else {
+      stream.realitySettings = {
+        serverName: node.sni || '',
+        fingerprint: 'chrome',
+        publicKey: node.public_key || '',
+        shortId: splitList(node.short_ids)[0] || '',
+        spiderX: '/'
+      };
+    }
   }
 
   return stream;
 }
 
-
-function buildOutboundStreamSettings(node) {
-  const stream = {
-    network: node.network,
-    security: node.security || 'none'
-  };
-  if (node.network === 'ws') {
-    stream.wsSettings = {
-      path: node.path || '/',
-      headers: {
-        Host: node.sni || ''
-      }
-    };
-  }
-  if (node.network === 'grpc') {
-    stream.grpcSettings = {
-      serviceName: node.path || 'grpc'
-    };
-  }
-  if (node.network === 'httpupgrade') {
-    stream.httpUpgradeSettings = {
-      path: node.path || '/'
-    };
-  }
-  if (node.security === 'tls') {
-    stream.tlsSettings = {
-      serverName: node.sni || '',
-      allowInsecure: false,
-      fingerprint: 'chrome'
-    };
-  }
-  if (node.security === 'reality') {
-    stream.realitySettings = {
-      serverName: node.sni || '',
-      fingerprint: 'chrome',
-      publicKey: node.public_key || '',
-      shortId: splitList(node.short_ids)[0] || '',
-      spiderX: '/'
-    };
-  }
-  return stream;
-}
+const buildStreamSettings = (node) => streamFor(node, { inbound: true });
+const buildOutboundStreamSettings = (node) => streamFor(node, { inbound: false });
 
 function buildOutbound(node, server) {
   const client = node.clients?.[0] || {};
@@ -150,6 +166,15 @@ function buildInbound(node) {
     decryption: 'none'
   };
 
+  if (node.protocol === 'hysteria2') {
+    delete settings.decryption;
+    settings.version = 2;
+    settings.clients = clients.map((client) => ({
+      auth: client.secret,
+      email: client.email || ''
+    }));
+  }
+
   if (node.protocol === 'vmess') {
     settings.clients = clients.map((client) => ({
       id: client.secret,
@@ -190,7 +215,7 @@ function buildInbound(node) {
     settings.udp = true;
   }
 
-  return {
+  const inbound = {
     tag: `${node.protocol}-${node.port}`,
     port: node.port,
     protocol: node.protocol,
@@ -201,6 +226,32 @@ function buildInbound(node) {
       destOverride: ['http', 'tls', 'quic']
     }
   };
+
+  if (isTunnelNode(node)) {
+    inbound.listen = '127.0.0.1';
+    inbound.streamSettings.security = 'none';
+    if (inbound.streamSettings.wsSettings) delete inbound.streamSettings.wsSettings.headers;
+    if (inbound.streamSettings.xhttpSettings) delete inbound.streamSettings.xhttpSettings.host;
+  }
+
+  if (node.protocol === 'hysteria2') {
+    inbound.streamSettings = {
+      network: 'hysteria',
+      security: 'tls',
+      tlsSettings: {
+        serverName: node.sni || '',
+        alpn: ['h3'],
+        certificates: [
+          {
+            certificateFile: node.cert_file,
+            keyFile: node.key_file
+          }
+        ]
+      }
+    };
+  }
+
+  return inbound;
 }
 
 export function buildXrayConfig(nodes, routes = []) {
@@ -252,11 +303,13 @@ export function buildXrayConfig(nodes, routes = []) {
 }
 
 export function nodeLinks(node, server) {
-  const host = server.host || '';
+  const tunnel = isTunnelNode(node) && server?.argo_domain;
+  const host = tunnel ? server.argo_domain : (server?.host || '');
+  const port = tunnel ? 443 : node.port;
   const clients = node.clients || [];
   const remark = encodeURIComponent(`${node.name}${clients.length > 1 ? `-${clients[0].email || '1'}` : ''}`);
   const network = node.network || 'tcp';
-  const security = node.security || 'none';
+  const security = tunnel ? 'tls' : (node.security || 'none');
 
   return clients.map((client) => {
     let link = '';
@@ -265,16 +318,16 @@ export function nodeLinks(node, server) {
         v: '2',
         ps: decodeURIComponent(remark),
         add: host,
-        port: Number(node.port),
+        port: Number(port),
         id: client.secret,
         aid: '0',
         scy: client.security || 'auto',
         net: network,
         type: 'none',
-        host: node.sni || host,
+        host: tunnel ? server.argo_domain : (node.sni || host),
         path: node.path || '',
         tls: security === 'tls' ? 'tls' : '',
-        sni: node.sni || ''
+        sni: tunnel ? server.argo_domain : (node.sni || '')
       };
       link = `vmess://${Buffer.from(JSON.stringify(payload)).toString('base64url')}`;
     }
@@ -285,38 +338,74 @@ export function nodeLinks(node, server) {
         security,
         type: network
       });
-      if (node.sni) params.set('sni', node.sni);
+      if (tunnel) {
+        params.set('host', server.argo_domain);
+        params.set('sni', server.argo_domain);
+      } else if (node.sni) {
+        params.set('sni', node.sni);
+      }
       params.set('fp', 'chrome');
-      if (node.path && network !== 'tcp') params.set('path', node.path);
+      if (node.path && network !== 'tcp') {
+        params.set('path', tunnel && network === 'ws' ? `${node.path}?ed=2560` : node.path);
+      }
       if (network === 'grpc') params.set('serviceName', node.path || 'grpc');
+      if (network === 'xhttp' && node.xhttp_mode) params.set('mode', node.xhttp_mode);
       if (security === 'reality') {
         params.set('pbk', node.public_key || '');
         params.set('sid', splitList(node.short_ids)[0] || '');
         params.set('spx', '/');
         params.set('flow', client.flow || 'xtls-rprx-vision');
       }
-      link = `vless://${client.secret}@${host}:${node.port}?${params.toString()}#${remark}`;
+      link = `vless://${client.secret}@${host}:${port}?${params.toString()}#${remark}`;
     }
 
     if (node.protocol === 'trojan') {
       const params = new URLSearchParams();
       params.set('security', security === 'tls' ? 'tls' : '');
-      if (node.sni) params.set('sni', node.sni);
+      if (tunnel) {
+        params.set('sni', server.argo_domain);
+        params.set('host', server.argo_domain);
+      } else if (node.sni) {
+        params.set('sni', node.sni);
+      }
       params.set('type', network);
-      if (node.path && network !== 'tcp') params.set('path', node.path);
-      link = `trojan://${client.secret}@${host}:${node.port}?${params.toString()}#${remark}`;
+      if (node.path && network !== 'tcp') {
+        params.set('path', tunnel && network === 'ws' ? `${node.path}?ed=2560` : node.path);
+      }
+      link = `trojan://${client.secret}@${host}:${port}?${params.toString()}#${remark}`;
     }
 
     if (node.protocol === 'shadowsocks') {
       const method = node.method || 'aes-256-gcm';
       const userinfo = Buffer.from(`${method}:${client.secret}`).toString('base64url');
-      link = `ss://${userinfo}@${host}:${node.port}#${remark}`;
+      if (tunnel) {
+        const plugin = Buffer.from(JSON.stringify({
+          mode: 'websocket',
+          tls: true,
+          host: server.argo_domain,
+          path: node.path || '/',
+          peer: server.argo_domain
+        })).toString('base64');
+        link = `ss://${userinfo}@${host}:${port}?plugin=v2ray-plugin%3B${encodeURIComponent(plugin)}#${remark}`;
+      } else {
+        link = `ss://${userinfo}@${host}:${port}#${remark}`;
+      }
     }
 
     if (node.protocol === 'socks') {
       const user = encodeURIComponent(client.email || 'user');
       const pass = encodeURIComponent(client.secret || '');
-      link = `socks://${user}:${pass}@${host}:${node.port}#${remark}`;
+      link = `socks://${user}:${pass}@${host}:${port}#${remark}`;
+    }
+
+    if (node.protocol === 'hysteria2') {
+      const params = new URLSearchParams();
+      params.set('security', 'tls');
+      params.set('sni', node.sni || '');
+      params.set('insecure', '1');
+      if (node.hy2_up) params.set('upmbps', String(node.hy2_up));
+      if (node.hy2_down) params.set('downmbps', String(node.hy2_down));
+      link = `hysteria2://${encodeURIComponent(client.secret)}@${host}:${port}?${params.toString()}#${remark}`;
     }
 
     return {

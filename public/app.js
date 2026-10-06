@@ -360,7 +360,8 @@ function protocolLabel(protocol) {
     vless: 'VLESS',
     trojan: 'Trojan',
     shadowsocks: 'Shadowsocks',
-    socks: 'SOCKS5'
+    socks: 'SOCKS5',
+    hysteria2: 'Hysteria2'
   }[protocol] || protocol;
 }
 
@@ -371,6 +372,7 @@ const STATUS_META = {
   config_mismatch: { label: '配置不一致', tone: 'amber' },
   config_missing: { label: '配置缺失', tone: 'red' },
   binary_missing: { label: '二进制缺失', tone: 'red' },
+  tunnel_down: { label: '隧道未运行', tone: 'amber' },
   ports_down: { label: '端口未监听', tone: 'amber' },
   unknown: { label: '未知', tone: 'muted' }
 };
@@ -393,7 +395,7 @@ function statusPill(state, titleExtra = '') {
 
 function nodeLiveState(serverItem, node) {
   const state = serverItem?.state || 'unknown';
-  if (['offline', 'binary_missing', 'config_missing', 'config_mismatch', 'service_stopped', 'ports_down'].includes(state)) return state;
+  if (['offline', 'binary_missing', 'config_missing', 'config_mismatch', 'service_stopped', 'tunnel_down', 'ports_down'].includes(state)) return state;
   if (state !== 'running') return 'unknown';
   const nodeStatus = serverItem?.nodes?.find((item) => item.id === node.id);
   if (!nodeStatus) return 'unknown';
@@ -406,14 +408,16 @@ const REPAIR_SUMMARIES = {
   service_stopped: '仅启动/重启 Xray 服务，不写入或覆盖 config.json',
   config_missing: '重新生成 config.json 并写入服务器，然后重启 Xray',
   config_mismatch: '用面板期望配置覆盖 config.json，然后重启 Xray',
-  binary_missing: '重新下载并安装 Xray 二进制，写入配置后重启'
+  binary_missing: '重新下载并安装 Xray 二进制，写入配置后重启',
+  tunnel_down: '重新安装/启动 nginx 与 cloudflared，并刷新隧道域名'
 };
 
 const REPAIR_ACTION_LABELS = {
   service_stopped: '恢复服务',
   config_missing: '恢复配置',
   config_mismatch: '恢复配置',
-  binary_missing: '重新部署'
+  binary_missing: '重新部署',
+  tunnel_down: '恢复隧道'
 };
 
 function repairActionLabel(driftType) {
@@ -710,6 +714,7 @@ function renderNodes({ motion = true } = {}) {
           <div class="card-head-badges">
             ${statusPill(nodeLiveState(state.statuses[node.server_id], node), cachedStatusTitle(live))}
             ${node.role === 'outbound' ? badge('出站', 'amber') : badge('入站')}
+            ${node.tunnel === 1 ? badge(node.network === 'xhttp' ? 'XHTTP · 隧道' : 'WS · 隧道', 'indigo') : ''}
             ${node.enabled === 1 ? badge('启用', 'green') : badge('停用')}
           </div>
         </div>
@@ -1225,6 +1230,7 @@ function runSubscriptionAction(action, subscriptionId, button) {
 function openServerModal(server = null) {
   const isEdit = Boolean(server);
   const authType = server?.auth_type || 'password';
+  const argoMode = server?.argo_mode || 'none';
   setModal(`
     <div class="modal-backdrop">
       <div class="modal">
@@ -1304,6 +1310,42 @@ function openServerModal(server = null) {
           </div>
 
           <div class="form-section">
+            <div class="form-section-title">Argo 隧道</div>
+            <div class="form-grid">
+              <div class="field">
+                <label>隧道模式</label>
+                <select name="argo_mode" id="argo-mode-select">
+                  ${[['none', '不使用'], ['quick', '临时隧道'], ['token', 'Token 隧道'], ['json', 'JSON 隧道']].map(([value, label]) => `
+                    <option value="${value}" ${argoMode === value ? 'selected' : ''}>${label}</option>
+                  `).join('')}
+                </select>
+                <span class="hint">节点使用 WS / XHTTP 传输时，通过 Argo 隧道对外提供服务。</span>
+              </div>
+              <div class="field">
+                <label>Nginx 内部端口</label>
+                <input name="nginx_port" type="number" min="0" max="65535" value="${escapeHtml(server?.nginx_port || '')}" placeholder="留空使用 8080">
+              </div>
+              <div class="field full argo-domain-field" style="${argoMode === 'none' ? 'display:none' : ''}">
+                <label>隧道域名</label>
+                <input name="argo_domain" value="${escapeHtml(server?.argo_domain || '')}" placeholder="${argoMode === 'quick' ? '部署后自动获取临时域名' : '例如 argo.example.com'}" ${argoMode === 'quick' ? 'readonly' : ''}>
+                <span class="hint" id="argo-domain-hint">${argoMode === 'quick' ? '临时隧道部署后自动回填 trycloudflare.com 域名。' : '固定隧道请填写 Cloudflare 中配置的域名。'}</span>
+              </div>
+              <div class="field full argo-token-field" style="${argoMode === 'token' ? '' : 'display:none'}">
+                <label>隧道 Token</label>
+                <div class="field-row">
+                  <input name="argo_token" type="password" autocomplete="new-password" placeholder="${server?.has_argo_token ? '已保存，留空保持不变' : 'Cloudflare Tunnel Token'}">
+                  <button type="button" class="reveal-btn" data-reveal="input[name='argo_token']">显示</button>
+                </div>
+              </div>
+              <div class="field full argo-json-field" style="${argoMode === 'json' ? '' : 'display:none'}">
+                <label>隧道凭据 JSON</label>
+                <textarea name="argo_json" class="masked" placeholder='{"AccountTag":"...","TunnelSecret":"...","TunnelID":"..."}'>${escapeHtml(server?.has_argo_json ? '' : '')}</textarea>
+                <span class="hint">${server?.has_argo_json ? '已保存凭据，留空保持不变。' : 'Cloudflare Tunnel 的凭据 JSON。'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-section">
             <div class="form-section-title">备注</div>
             <div class="form-grid">
               <div class="field full">
@@ -1322,6 +1364,15 @@ function openServerModal(server = null) {
   `);
 
   $$('#modal-root [data-close]').forEach((button) => button.addEventListener('click', closeModal));
+  const argoSelect = $('#argo-mode-select');
+  if (argoSelect) {
+    argoSelect.addEventListener('change', () => {
+      const mode = argoSelect.value;
+      $('#modal-root .argo-domain-field').style.display = mode === 'none' ? 'none' : '';
+      $('#modal-root .argo-token-field').style.display = mode === 'token' ? '' : 'none';
+      $('#modal-root .argo-json-field').style.display = mode === 'json' ? '' : 'none';
+    });
+  }
   $$('#modal-root .segmented button').forEach((button) => {
     button.addEventListener('click', () => {
       const auth = button.dataset.auth;
@@ -1355,6 +1406,8 @@ function openServerModal(server = null) {
     if (data.auth_type === 'key' && !data.private_key) delete data.private_key;
     if (!data.passphrase) delete data.passphrase;
     if (!data.sudo_password) delete data.sudo_password;
+    if (!data.argo_token) delete data.argo_token;
+    if (!data.argo_json) delete data.argo_json;
     return data;
   }
 
@@ -1459,7 +1512,7 @@ function openNodeModal(serverId, node = null) {
             <div class="field">
               <label>协议</label>
               <select name="protocol">
-                ${['vmess', 'vless', 'trojan', 'shadowsocks', 'socks'].map((protocol) => `
+                ${['vmess', 'vless', 'trojan', 'shadowsocks', 'socks', 'hysteria2'].map((protocol) => `
                   <option value="${protocol}" ${(node?.protocol || 'vless') === protocol ? 'selected' : ''}>${escapeHtml(protocolLabel(protocol))}</option>
                 `).join('')}
               </select>
@@ -1487,7 +1540,7 @@ function openNodeModal(serverId, node = null) {
             <div class="field">
               <label>传输</label>
               <select name="network">
-                ${['tcp', 'ws', 'grpc', 'httpupgrade'].map((item) => `
+                ${['tcp', 'ws', 'grpc', 'httpupgrade', 'xhttp'].map((item) => `
                   <option value="${item}" ${network === item ? 'selected' : ''}>${escapeHtml(item.toUpperCase())}</option>
                 `).join('')}
               </select>
@@ -1507,6 +1560,30 @@ function openNodeModal(serverId, node = null) {
             <div class="field tls-field" style="${security === 'tls' ? '' : 'display:none'}">
               <label>私钥路径</label>
               <input name="key_file" value="${escapeHtml(node?.key_file || '')}" placeholder="/etc/ssl/privkey.pem">
+            </div>
+            <div class="field full self-signed-field" style="display:none">
+              <label class="hint">证书来源</label>
+              <label class="inline-check"><input type="checkbox" name="self_signed" ${node?.self_signed === 1 ? 'checked' : ''} style="width:auto;height:20px"> 使用面板自动生成的自签证书（证书路径留空即可）</label>
+            </div>
+            <div class="field full tunnel-field" style="display:none">
+              <label class="hint">部署方式</label>
+              <label class="inline-check"><input type="checkbox" name="tunnel" ${node?.tunnel === 1 ? 'checked' : ''} style="width:auto;height:20px"> 通过 Argo 隧道对外（源站只监听 127.0.0.1，由服务器上的隧道配置决定入口域名）</label>
+            </div>
+            <div class="field xhttp-field" style="display:none">
+              <label>XHTTP 模式</label>
+              <select name="xhttp_mode">
+                ${[['auto', 'auto'], ['packet-up', 'packet-up'], ['stream-up', 'stream-up'], ['stream-one', 'stream-one']].map(([value, label]) => `
+                  <option value="${value}" ${(node?.xhttp_mode || 'auto') === value ? 'selected' : ''}>${label}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="field hy2-field" style="display:none">
+              <label>上行 Mbps</label>
+              <input name="hy2_up" type="number" min="0" max="100000" value="${escapeHtml(node?.hy2_up || '')}" placeholder="留空不限速">
+            </div>
+            <div class="field hy2-field" style="display:none">
+              <label>下行 Mbps</label>
+              <input name="hy2_down" type="number" min="0" max="100000" value="${escapeHtml(node?.hy2_down || '')}" placeholder="留空不限速">
             </div>
             <div class="field full reality-field" style="${security === 'reality' ? '' : 'display:none'}">
               <label>Reality 伪装站点预设</label>
@@ -1635,6 +1712,7 @@ function openNodeModal(serverId, node = null) {
   function applyProtocolVisibility(protocol) {
     const isSocks = protocol === 'socks';
     const isSs = protocol === 'shadowsocks';
+    const isHy2 = protocol === 'hysteria2';
     const network = $('select[name="network"]')?.value || 'tcp';
     let security = $('select[name="security"]')?.value || 'none';
     const networkField = $('select[name="network"]').closest('.field');
@@ -1643,6 +1721,32 @@ function openNodeModal(serverId, node = null) {
     const sniLabel = $('#sni-label');
     const pathLabel = $('#path-label');
     const pathField = $('.path-field');
+    const tunnelField = $('.tunnel-field');
+    const xhttpField = $('.xhttp-field');
+    const selfSignedField = $('.self-signed-field');
+    const tunnelCheckbox = $('input[name="tunnel"]');
+
+    $$('.hy2-field').forEach((field) => field.style.display = isHy2 ? '' : 'none');
+
+    if (isHy2) {
+      $('select[name="network"]').value = 'tcp';
+      $('select[name="security"]').value = 'tls';
+      networkField.style.display = 'none';
+      securityField.style.display = 'none';
+      sniField.style.display = '';
+      if (sniLabel) sniLabel.textContent = 'SNI / serverName';
+      if (pathField) pathField.style.display = 'none';
+      $$('.ss-field').forEach((field) => field.style.display = 'none');
+      $$('.tls-field').forEach((field) => field.style.display = '');
+      $$('.reality-field').forEach((field) => field.style.display = 'none');
+      if (tunnelField) tunnelField.style.display = 'none';
+      if (tunnelCheckbox) tunnelCheckbox.checked = false;
+      if (xhttpField) xhttpField.style.display = 'none';
+      if (selfSignedField) selfSignedField.style.display = '';
+      const selfSigned = $('input[name="self_signed"]');
+      if (selfSigned) selfSigned.checked = true;
+      return;
+    }
 
     $$('.ss-field').forEach((field) => field.style.display = isSs ? '' : 'none');
 
@@ -1669,18 +1773,31 @@ function openNodeModal(serverId, node = null) {
       if (pathField) pathField.style.display = 'none';
       $$('.tls-field').forEach((field) => field.style.display = 'none');
       $$('.reality-field').forEach((field) => field.style.display = 'none');
+      if (tunnelField) tunnelField.style.display = 'none';
+      if (tunnelCheckbox) tunnelCheckbox.checked = false;
+      if (xhttpField) xhttpField.style.display = 'none';
+      if (selfSignedField) selfSignedField.style.display = 'none';
       return;
     }
 
     networkField.style.display = '';
     securityField.style.display = '';
+    const tunnelable = ['ws', 'xhttp'].includes(network);
+    if (tunnelField) tunnelField.style.display = tunnelable ? '' : 'none';
+    if (tunnelCheckbox && !tunnelable) tunnelCheckbox.checked = false;
+    if (xhttpField) xhttpField.style.display = network === 'xhttp' ? '' : 'none';
+    if (selfSignedField) selfSignedField.style.display = security === 'tls' && network !== 'ws' && network !== 'xhttp' ? '' : 'none';
     const showSni = security !== 'none' || network !== 'tcp';
     sniField.style.display = showSni ? '' : 'none';
     if (sniLabel) {
-      sniLabel.textContent = network !== 'tcp' && security === 'none' ? 'Host / 伪装域名' : 'SNI / serverName';
+      sniLabel.textContent = (network !== 'tcp' && security === 'none') || (tunnelCheckbox?.checked) ? 'Host / 伪装域名' : 'SNI / serverName';
     }
     if (pathLabel) {
-      pathLabel.textContent = network === 'grpc' ? 'serviceName' : network === 'ws' || network === 'httpupgrade' ? '路径 / Host' : '路径';
+      pathLabel.textContent = network === 'grpc'
+        ? 'serviceName'
+        : network === 'ws' || network === 'httpupgrade' || network === 'xhttp'
+          ? '路径'
+          : '路径';
     }
     if (pathField) pathField.style.display = network === 'tcp' ? 'none' : '';
     $$('.tls-field').forEach((field) => field.style.display = security === 'tls' ? '' : 'none');
@@ -1844,6 +1961,15 @@ function openNodeModal(serverId, node = null) {
     applyProtocolVisibility(protocolSelect.value);
     renderClientRows();
   });
+  const tunnelCheckboxEl = $('input[name="tunnel"]');
+  if (tunnelCheckboxEl) {
+    tunnelCheckboxEl.addEventListener('change', () => {
+      const label = $('#sni-label');
+      if (label && protocolSelect.value !== 'hysteria2') {
+        label.textContent = tunnelCheckboxEl.checked ? 'Host / 伪装域名' : 'SNI / serverName';
+      }
+    });
+  }
 
   async function saveAndDeploy(deploy) {
     const form = $('#node-form');
@@ -1861,6 +1987,23 @@ function openNodeModal(serverId, node = null) {
     }));
     data.method = form.querySelector('[name="method"]')?.value || 'aes-256-gcm';
     data.ss_network = form.querySelector('[name="ss_network"]')?.value || 'tcp';
+    data.tunnel = Boolean(form.querySelector('[name="tunnel"]')?.checked);
+    data.self_signed = Boolean(form.querySelector('[name="self_signed"]')?.checked);
+    data.xhttp_mode = form.querySelector('[name="xhttp_mode"]')?.value || '';
+    data.hy2_up = Number(form.querySelector('[name="hy2_up"]')?.value || 0);
+    data.hy2_down = Number(form.querySelector('[name="hy2_down"]')?.value || 0);
+    if (data.tunnel) {
+      data.security = 'none';
+      data.cert_file = '';
+      data.key_file = '';
+      data.self_signed = false;
+    }
+    if (data.protocol === 'hysteria2') {
+      data.network = 'tcp';
+      data.security = 'tls';
+      data.self_signed = true;
+      data.tunnel = false;
+    }
     data.server_id = targetServerId;
     try {
       let saved;
@@ -2342,6 +2485,16 @@ function openStatusModal(server, status) {
   const ports = status?.ports || { tcp: [], udp: [] };
   const allPorts = [...new Set([...ports.tcp, ...ports.udp])];
   const listeningLabel = allPorts.length ? allPorts.join(', ') : '无';
+  const tunnel = status?.tunnel;
+  const tunnelBadge = tunnel
+    ? tunnel.error
+      ? badge('检查失败', 'red', tunnel.error)
+      : !tunnel.cloudflared_present
+        ? badge('未安装', 'red')
+        : ['active', 'started'].includes(tunnel.argo_active)
+          ? badge('运行中', 'green')
+          : badge('未运行', 'amber')
+    : null;
   const chip = (text, ok) => `<span class="status-chip ${ok ? 'ok' : 'bad'}">${escapeHtml(text)}</span>`;
   const mutedChip = (text) => `<span class="status-chip muted">${escapeHtml(text)}</span>`;
 
@@ -2354,7 +2507,7 @@ function openStatusModal(server, status) {
         else if (!nodeStatus?.in_config) stateBadge = badge('配置缺失', 'red');
         else if (!nodeStatus?.listening) stateBadge = badge('端口未监听', 'red');
         else stateBadge = badge('监听正常', 'green');
-        const wantsUdp = node.protocol === 'socks' || String(node.ss_network || '').includes('udp');
+        const wantsUdp = node.protocol === 'socks' || node.protocol === 'hysteria2' || String(node.ss_network || '').includes('udp');
         const udpChip = wantsUdp
           ? chip(`UDP ${nodeStatus?.listening_udp ? '监听' : '未监听'}`, Boolean(nodeStatus?.listening_udp))
           : '';
@@ -2403,6 +2556,11 @@ function openStatusModal(server, status) {
               <span class="status-summary-label">监听端口</span>
               <span class="status-summary-value status-port-value">${escapeHtml(listeningLabel)}</span>
             </div>
+            ${tunnelBadge ? `
+            <div class="status-summary-item">
+              <span class="status-summary-label">Argo 隧道</span>
+              <span class="status-summary-value">${tunnelBadge}${server.argo_domain ? `<span class="hint">${escapeHtml(server.argo_domain)}</span>` : ''}</span>
+            </div>` : ''}
           </div>
           <div class="status-section-head">
             <span>节点实际状态</span>

@@ -395,3 +395,98 @@ test('reality is restricted to vless on non-ws transports', () => {
   assert.equal(canUseReality('trojan', 'grpc'), false);
   assert.equal(canUseReality('vmess', 'tcp'), false);
 });
+
+test('tunnel ws nodes listen on localhost and link via argo domain', () => {
+  const node = {
+    id: 't1',
+    name: 'argo-ws',
+    protocol: 'vless',
+    port: 30000,
+    network: 'ws',
+    security: 'none',
+    sni: '',
+    path: '/argox-vl',
+    tunnel: 1,
+    enabled: 1,
+    clients: [{ email: 'u1', secret: 'uuid-1', flow: '' }]
+  };
+  const config = buildXrayConfig([node]);
+  assert.equal(config.inbounds[0].listen, '127.0.0.1');
+  assert.equal(config.inbounds[0].streamSettings.wsSettings.path, '/argox-vl');
+  assert.equal(config.inbounds[0].streamSettings.wsSettings.headers, undefined);
+  assert.equal(config.inbounds[0].streamSettings.security, 'none');
+
+  const server = { host: '203.0.113.10', argo_domain: 'demo.trycloudflare.com' };
+  const [link] = nodeLinks(node, server);
+  assert.match(link.link, /^vless:\/\/uuid-1@demo\.trycloudflare\.com:443/);
+  assert.match(link.link, /host=demo\.trycloudflare\.com/);
+  assert.match(link.link, /sni=demo\.trycloudflare\.com/);
+  assert.match(link.link, /security=tls/);
+  assert.match(link.link, /path=%2Fargox-vl%3Fed%3D2560/);
+});
+
+test('xhttp transport emits xhttp settings and share link', () => {
+  const node = {
+    id: 'x1',
+    name: 'xhttp-node',
+    protocol: 'vless',
+    port: 30010,
+    network: 'xhttp',
+    security: 'none',
+    sni: '',
+    path: '/argox-xh',
+    xhttp_mode: 'auto',
+    tunnel: 1,
+    enabled: 1,
+    clients: [{ email: 'u1', secret: 'uuid-1', flow: '' }]
+  };
+  const config = buildXrayConfig([node]);
+  assert.equal(config.inbounds[0].streamSettings.network, 'xhttp');
+  assert.equal(config.inbounds[0].streamSettings.xhttpSettings.mode, 'auto');
+  assert.equal(config.inbounds[0].streamSettings.xhttpSettings.path, '/argox-xh');
+  assert.equal(config.inbounds[0].listen, '127.0.0.1');
+  const server = { host: '203.0.113.10', argo_domain: 'demo.trycloudflare.com' };
+  const [link] = nodeLinks(node, server);
+  assert.match(link.link, /type=xhttp/);
+  assert.match(link.link, /mode=auto/);
+});
+
+test('hysteria2 inbound uses self-signed cert and emits hysteria2 link', () => {
+  const node = {
+    id: 'h1',
+    name: 'hy2',
+    protocol: 'hysteria2',
+    port: 8443,
+    network: 'tcp',
+    security: 'tls',
+    sni: 'addons.mozilla.org',
+    cert_file: '/usr/local/etc/xray/cert/cert.pem',
+    key_file: '/usr/local/etc/xray/cert/private.key',
+    self_signed: 1,
+    hy2_up: 100,
+    hy2_down: 200,
+    enabled: 1,
+    clients: [{ email: 'u1', secret: 'hy2-pass', flow: '' }]
+  };
+  const config = buildXrayConfig([node]);
+  const inbound = config.inbounds[0];
+  assert.equal(inbound.protocol, 'hysteria2');
+  assert.deepEqual(inbound.streamSettings, {
+    network: 'hysteria',
+    security: 'tls',
+    tlsSettings: {
+      serverName: 'addons.mozilla.org',
+      alpn: ['h3'],
+      certificates: [
+        {
+          certificateFile: '/usr/local/etc/xray/cert/cert.pem',
+          keyFile: '/usr/local/etc/xray/cert/private.key'
+        }
+      ]
+    }
+  });
+  const [link] = nodeLinks(node, { host: '203.0.113.10' });
+  assert.match(link.link, /^hysteria2:\/\/hy2-pass@203\.0\.113\.10:8443/);
+  assert.match(link.link, /upmbps=100/);
+  assert.match(link.link, /downmbps=200/);
+});

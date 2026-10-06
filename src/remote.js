@@ -1,6 +1,15 @@
 import { runChecked, runScript, runSudo } from './ssh.js';
 import { buildXrayConfig } from './xray.js';
 import { createHash } from 'node:crypto';
+import {
+  buildCertificateScript,
+  deployTunnel,
+  needsSelfSignedCert,
+  readTunnelStatus,
+  tunnelRequired,
+  withSelfSignedPaths
+} from './argo.js';
+import { getServerRecord, updateServerArgoDomain } from './db.js';
 
 
 const PROBE_SCRIPT = `
@@ -194,7 +203,7 @@ export async function installXray(server, { force = false } = {}) {
 }
 
 export async function writeXrayConfig(server, nodes, routes = []) {
-  const config = buildXrayConfig(nodes, routes);
+  const config = buildXrayConfig(withSelfSignedPaths(nodes), routes);
   const json = JSON.stringify(config, null, 2);
   const b64 = Buffer.from(json).toString('base64');
   const script = `
@@ -457,9 +466,20 @@ export async function xrayStatus(server, nodes = [], options = {}) {
       config: null,
       ports: [],
       nodes: [],
+      tunnel: null,
       elapsed_ms: Date.now() - startedAt,
       listening: ''
     };
+  }
+
+  let tunnel = null;
+  const tunnelNeeded = tunnelRequired(server, nodes);
+  if (tunnelNeeded) {
+    try {
+      tunnel = await readTunnelStatus(server);
+    } catch {
+      tunnel = { error: 'tunnel status unavailable' };
+    }
   }
 
   const fields = parseStatusOutput(result.stdout);
@@ -527,6 +547,7 @@ export async function xrayStatus(server, nodes = [], options = {}) {
       udp: udpPorts
     },
     nodes: buildNodeStatuses(nodes, configData, tcpPorts, udpPorts),
+    tunnel,
     elapsed_ms: Date.now() - startedAt,
     listening: allPorts.join(', ')
   };
@@ -549,9 +570,25 @@ fi
 
 export async function deployServer(server, nodes, options = {}) {
   const routes = options.routes || [];
+  const enabledNodes = nodes.filter((node) => node.enabled !== 0 && node.enabled !== false);
+
+  if (needsSelfSignedCert(enabledNodes)) {
+    const sni = enabledNodes.find((node) => node.self_signed === 1 || node.protocol === 'hysteria2')?.sni || 'localhost';
+    await runChecked(runSudo(server, buildCertificateScript(undefined, undefined, sni), { timeout: 60000 }));
+  }
   await installXray(server, options);
   await writeXrayConfig(server, nodes, routes);
   const restart = await restartXray(server);
-  const status = await xrayStatus(server);
-  return { ok: true, restart, status };
+
+  let tunnel = null;
+  if (tunnelRequired(server, enabledNodes)) {
+    tunnel = await deployTunnel(server, enabledNodes, options);
+    if (tunnel?.argo_domain) {
+      updateServerArgoDomain(server.id, tunnel.argo_domain);
+      server = getServerRecord(server.id) || server;
+    }
+  }
+
+  const status = await xrayStatus(server, nodes);
+  return { ok: true, restart, tunnel, status };
 }

@@ -5,7 +5,8 @@ const DRIFT_ACTIONS = {
   service_stopped: 'restart',
   config_missing: 'write_config_restart',
   config_mismatch: 'write_config_restart',
-  binary_missing: 'redeploy'
+  binary_missing: 'redeploy',
+  tunnel_down: 'redeploy'
 };
 
 export function repairActionFor(driftType) {

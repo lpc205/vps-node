@@ -13,7 +13,8 @@ const PROTOCOL_PREFIXES = {
   vless: 'vless://',
   trojan: 'trojan://',
   shadowsocks: 'ss://',
-  socks: 'socks://'
+  socks: 'socks://',
+  hysteria2: 'hysteria2://'
 };
 
 function nodeSummary(node, server) {

@@ -44,6 +44,7 @@ import { deriveServerState, getStatusIntervalSeconds } from './status.js';
 import { deriveDriftType } from './status.js';
 import { performRepair, routesForServer } from './repair.js';
 import { generateRealityKeypair, nodeLinks } from './xray.js';
+import { uninstallTunnel } from './argo.js';
 import {
   buildSubscriptionNodes,
   isSubscriptionExpired,
@@ -60,7 +61,8 @@ const DRIFT_REASONS = {
   service_stopped: 'Xray 服务未运行',
   config_missing: 'config.json 不存在',
   config_mismatch: 'config.json 与面板期望不一致',
-  binary_missing: '/usr/local/bin/xray 不存在'
+  binary_missing: '/usr/local/bin/xray 不存在',
+  tunnel_down: 'Argo 隧道（cloudflared）未运行或未安装'
 };
 const publicDir = join(here, '..', 'public');
 const lucidePath = join(here, '..', 'node_modules', 'lucide', 'dist', 'umd', 'lucide.js');
@@ -211,6 +213,9 @@ app.delete('/api/servers/:id', asyncHandler(async (req, res) => {
   const force = req.query.force === 'true' || req.query.force === '1' || req.body?.force === true;
   if (!force) {
     try {
+      if (server.argo_mode && server.argo_mode !== 'none') {
+        await uninstallTunnel(server);
+      }
       await uninstallXray(server);
     } catch (err) {
       const classified = classifySshError(err);
