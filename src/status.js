@@ -38,6 +38,7 @@ function getConcurrency() {
 export function deriveServerState(status) {
   if (!status) return 'unknown';
   if (!status.ssh_reachable) return 'offline';
+  if (status.config_unsupported) return 'migration_required';
   if (!status.xray_bin_present) return 'binary_missing';
   if (!status.config_present) return 'config_missing';
   if (!status.config_match) return 'config_mismatch';
@@ -78,6 +79,7 @@ export function buildStatusRecord(result, expectedSha, options = {}) {
     service_active: serviceActive ? 1 : 0,
     config_present: configPresent ? 1 : 0,
     config_match: configMatch ? 1 : 0,
+    config_unsupported: 0,
     ports_listening: portsListening ? 1 : 0,
     tunnel_required: tunnelRequiredFlag ? 1 : 0,
     tunnel_cloudflared_present: tunnelCloudflaredPresent ? 1 : 0,
@@ -230,9 +232,21 @@ async function checkServer(server) {
         node_status: (cached?.node_status || []).map((node) => ({ ...node, listening: false }))
       };
     } else if (full) {
-      record = buildStatusRecord(result, expectedConfigSha256(server.id), {
+      let expectedSha = '';
+      let migrationError = '';
+      try {
+        expectedSha = expectedConfigSha256(server.id);
+      } catch (error) {
+        migrationError = String(error?.message || error);
+      }
+      record = buildStatusRecord(result, expectedSha, {
         tunnelRequired: tunnelRequired(serverRecord, nodes)
       });
+      if (migrationError) {
+        record.config_unsupported = 1;
+        record.config_match = 0;
+        record.last_error = `旧节点配置需要迁移：${migrationError}`;
+      }
       fullCheckedAt.set(server.id, Date.now());
     } else {
       updateMetrics(server.id, result);
