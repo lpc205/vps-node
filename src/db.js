@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir } from './paths.js';
@@ -372,7 +373,7 @@ export function getNode(id) {
   return parseNode(db.prepare('SELECT * FROM nodes WHERE id = ?').get(id));
 }
 
-function normalizeClients(input, existingClients = null) {
+function normalizeClients(input, existingClients = null, protocol = '', method = '') {
   const VMESS_SECURITIES = ['auto', 'aes-128-gcm', 'chacha20-poly1305'];
   const source = Array.isArray(input) && input.length > 0
     ? input
@@ -387,7 +388,18 @@ function normalizeClients(input, existingClients = null) {
     : [{ email: '', secret: newId(), flow: '', security: 'auto' }];
   return clients.map((client) => ({
     ...client,
-    secret: client.secret || newId(),
+    // Shadowsocks 2022 requires a binary key encoded in Base64, not UUID.
+    secret: protocol === 'shadowsocks' && method.startsWith('2022-')
+      ? (() => {
+          const bytes = method === '2022-blake3-aes-128-gcm' ? 16 : 32;
+          const current = client.secret || '';
+          try {
+            if (Buffer.from(current, 'base64').length === bytes &&
+                Buffer.from(current, 'base64').toString('base64') === current) return current;
+          } catch { /* generate a fresh valid key */ }
+          return randomBytes(bytes).toString('base64');
+        })()
+      : (client.secret || newId()),
     flow: client.flow || '',
     security: client.security || 'auto'
   }));
@@ -407,7 +419,6 @@ export function saveNode(input, id = null) {
   const SS_METHODS = [
     'aes-128-gcm',
     'aes-256-gcm',
-    'chacha20-poly1305',
     'chacha20-ietf-poly1305',
     'xchacha20-ietf-poly1305',
     '2022-blake3-aes-128-gcm',
@@ -455,7 +466,7 @@ export function saveNode(input, id = null) {
     method,
     ss_network: ssNetwork,
     sni: String(input.sni || input.server_name || '').trim(),
-    path: String(input.path || '').trim(),
+    path: tunnel ? (String(input.path || '').trim() || `/ws-${port}`) : String(input.path || '').trim(),
     cert_file: tunnel ? '' : String(input.cert_file || '').trim(),
     key_file: tunnel ? '' : String(input.key_file || '').trim(),
     dest: String(input.dest || '').trim(),
@@ -471,7 +482,7 @@ export function saveNode(input, id = null) {
     hy2_up: Math.max(0, Math.min(100000, Number(input.hy2_up) || 0)),
     hy2_down: Math.max(0, Math.min(100000, Number(input.hy2_down) || 0)),
     preferred_address: String(input.preferred_address || '').trim(),
-    clients_json: JSON.stringify(normalizeClients(input.clients, existing?.clients)),
+    clients_json: JSON.stringify(normalizeClients(input.clients, existing?.clients, protocol, method)),
     enabled: input.enabled === false || input.enabled === 0 ? 0 : 1
   };
 
