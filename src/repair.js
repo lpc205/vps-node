@@ -1,5 +1,5 @@
 import { addRepairLog, getNode, getServerPublic, listNodes, listRoutesForServer } from './db.js';
-import { deployServer, restartXray, writeXrayConfig } from './remote.js';
+import { deployServer, restartSingbox, writeSingboxConfig } from './remote.js';
 
 const DRIFT_ACTIONS = {
   service_stopped: 'restart',
@@ -36,12 +36,12 @@ export async function performRepair(server, driftType) {
   try {
     let result;
     if (action === 'restart') {
-      result = await restartXray(server);
+      result = await restartSingbox(server);
     } else if (action === 'write_config_restart') {
       const nodes = listNodes(server.id);
       const routes = routesForServer(server.id);
-      await writeXrayConfig(server, nodes, routes);
-      result = await restartXray(server);
+      await writeSingboxConfig(server, nodes, routes);
+      result = await restartSingbox(server);
     } else {
       const nodes = listNodes(server.id);
       const routes = routesForServer(server.id);
