@@ -64,7 +64,7 @@ const DRIFT_REASONS = {
   service_stopped: 'Sing-box 服务未运行',
   config_missing: 'config.json 不存在',
   config_mismatch: 'config.json 与面板期望不一致',
-  binary_missing: '/usr/local/bin/singbox 不存在',
+  binary_missing: '/usr/local/bin/sing-box 不存在',
   tunnel_down: 'Argo 隧道（cloudflared）未运行或未安装'
 };
 
