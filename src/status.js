@@ -217,6 +217,7 @@ async function checkServer(server) {
   if (elapsed >= SLOW_CHECK_MS) {
     console.warn(`[status] server=${server.name} slow check ${elapsed}ms${thrownError ? ` error=${thrownError}` : ''}`);
   }
+  if (full) fullCheckedAt.set(server.id, Date.now());
   const failed = full ? (!result?.ok || !result?.ssh?.connected) : !result?.ok;
   const { failures, nextCheckAt } = nextCheckFor(cached, failed);
   let record;
