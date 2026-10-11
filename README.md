@@ -29,7 +29,7 @@
 
 不支持旧 Xray 专属的 XHTTP / HTTPUpgrade 组合。需要自己准备 DNS 解析、正式域名证书或 Cloudflare 固定隧道认证信息的方案也不出现在部署预设中。
 
-**安全提醒：** 使用自签证书的分享链接目前仍以客户端不校验证书链的兼容参数输出；这意味着 TLS **未获得严格的服务器身份认证**。不要把它误认为等同于有效证书或公钥固定。正式部署建议补充证书指纹固定验证。Reality 和原生 Shadowsocks 不受这一自签证书限制。
+**自签证书安全：** 部署时自动读取服务器证书的 SHA-256 整体指纹与 SPKI 公钥指纹。用于 Sing-box 出站路由时要求验证 SPKI 指纹，不再默认设置 `insecure: true`；部分 URI 分享链接附带供 Shadowrocket 等兼容客户端使用的 `hpkp` 指纹字段。**不同客户端对证书指纹 URI 参数的支持并不统一**，不支持时需另行配置证书或公钥指纹；不能将未完成验证的客户端视为安全或可用。
 
 **Quick Tunnel 限制：** 临时隧道适合体验和轻量用途，不保证永久稳定；服务重启后临时域名可能更换，订阅会随重新部署更新。
 
@@ -68,7 +68,7 @@ docker compose up -d --build
 
 默认仅映射本机 `127.0.0.1:3000:3000`。数据在 `./data`，含 SQLite 数据库和加密密钥文件，容器重建必须保留整个目录。
 
-运行单元测试：`npm test`。
+运行单元测试：`npm test`。GitHub Actions 另外使用 Sing-box 官方二进制校验部署预设，并构建 Docker 镜像检查健康接口。
 
 ### 配置项
 
@@ -78,6 +78,7 @@ docker compose up -d --build
 | `DATA_DIR` | `./data` | SQLite 与加密密钥 |
 | `PANEL_STATUS_INTERVAL` | `5` | 快速巡检间隔，秒，最小 5 |
 | `PANEL_STATUS_CONCURRENCY` | `5` | 巡检并发量，1～10 |
+| `PANEL_SINGBOX_VERSION` | `1.14.3` | 首次安装时使用已通过 CI 验证的 Sing-box 版本 |
 
 ## 从 Xray 版本升级
 
