@@ -305,6 +305,7 @@ const STATUS_META = {
   offline: { label: '离线', tone: 'red' },
   config_mismatch: { label: '配置不一致', tone: 'amber' },
   migration_required: { label: '旧节点需迁移', tone: 'amber' },
+  disabled: { label: '已禁用', tone: 'muted' },
   config_missing: { label: '配置缺失', tone: 'red' },
   binary_missing: { label: '二进制缺失', tone: 'red' },
   tunnel_down: { label: '隧道未运行', tone: 'amber' },
@@ -329,6 +330,8 @@ function statusPill(state, titleExtra = '') {
 }
 
 function nodeLiveState(serverItem, node) {
+  if (node.enabled === 0 || node.enabled === false) return 'disabled';
+  if (node.role === 'outbound') return serverItem?.state === 'offline' ? 'offline' : 'unknown';
   const state = serverItem?.state || 'unknown';
   if (['offline', 'binary_missing', 'config_missing', 'config_mismatch', 'migration_required', 'service_stopped', 'tunnel_down', 'ports_down'].includes(state)) return state;
   if (state !== 'running') return 'unknown';
