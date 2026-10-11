@@ -1,10 +1,19 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildSingboxConfig, buildSingboxInbound, canUseReality,
   generateRealityKeypair, nodeLinks
 } from '../src/singbox.js';
-import { buildNodeStatuses } from '../src/remote.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+const testDataDir = mkdtempSync(join(tmpdir(), 'vps-health-test-'));
+process.env.DATA_DIR = testDataDir;
+
+const { buildNodeStatuses } = await import('../src/remote.js');
+const db = await import('../src/db.js');
+after(() => { db.closeDatabase(); rmSync(testDataDir, { recursive: true, force: true }); });
 
 const makeNode = (overrides = {}) => ({
   id: 'one', name: '测试节点', server_id: 'server-1',
