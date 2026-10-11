@@ -111,10 +111,17 @@ function outboundTLS(node) {
   if (node.security === 'reality') return {
     enabled: true,
     server_name: node.sni || list(node.server_names)[0] || realityTarget(node).server,
+    utls: { enabled: true, fingerprint: 'chrome' },
     reality: { enabled: true, public_key: node.public_key, short_id: list(node.short_ids)[0] || '' }
   };
   if (node.security === 'tls' || isSelfSignedNode(node)) {
-    return { enabled: true, server_name: node.sni || '', insecure: true };
+    const tls = { enabled: true, server_name: node.sni || '', insecure: false };
+    if (node.tls_public_key_sha256) {
+      tls.certificate_public_key_sha256 = [node.tls_public_key_sha256];
+    } else if (node.self_signed || !node.sni) {
+      throw new Error('TLS 出站节点缺少证书公钥指纹，请先部署出口节点并生成证书指纹');
+    }
+    return tls;
   }
   return undefined;
 }
@@ -204,13 +211,16 @@ export function nodeLinks(node, server) {
       const payload = { v: '2', ps: node.name, add: host, port, id: client.secret, aid: '0', net, type: 'none', host: viaTunnel ? server.argo_domain : (node.sni || ''), path: node.path || '/', tls: viaTunnel ? 'tls' : '', sni: viaTunnel ? server.argo_domain : (node.sni || '') };
       link = `vmess://${Buffer.from(JSON.stringify(payload)).toString('base64')}`;
     } else if (node.protocol === 'hysteria2') {
-      const params = new URLSearchParams({ insecure: '1', sni: node.sni || '' });
+      const params = new URLSearchParams({ sni: node.sni || '', peer: node.sni || '' });
+      if (node.tls_cert_fingerprint_sha256) params.set('hpkp', node.tls_cert_fingerprint_sha256);
       link = `hysteria2://${secret}@${host}:${port}?${params}#${name}`;
     } else if (node.protocol === 'tuic') {
-      const params = new URLSearchParams({ congestion_control: 'bbr', allow_insecure: '1' });
+      const params = new URLSearchParams({ congestion_control: 'bbr', peer: node.sni || '' });
+      if (node.tls_cert_fingerprint_sha256) params.set('hpkp', node.tls_cert_fingerprint_sha256);
       link = `tuic://${secret}:${secret}@${host}:${port}?${params}#${name}`;
     } else if (node.protocol === 'trojan' || node.protocol === 'anytls') {
-      const params = new URLSearchParams({ security: 'tls', allowInsecure: '1' });
+      const params = new URLSearchParams({ security: 'tls', peer: node.sni || '' });
+      if (node.tls_cert_fingerprint_sha256) params.set('hpkp', node.tls_cert_fingerprint_sha256);
       link = `${node.protocol}://${secret}@${host}:${port}?${params}#${name}`;
     } else if (node.protocol === 'shadowsocks') {
       const userinfo = Buffer.from(`${node.method || 'aes-256-gcm'}:${client.secret}`).toString('base64url');
