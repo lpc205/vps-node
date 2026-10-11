@@ -27,7 +27,7 @@ test('deriveDriftType only reports actual drift', () => {
 test('buildStatusRecord detects config sha mismatch and port state', () => {
   const result = {
     ssh: { connected: true },
-    xray: { installed: true, bin_present: true, running: true },
+    singbox: { installed: true, bin_present: true, running: true },
     config: { exists: true, sha256: 'abc' },
     nodes: [
       { id: 'n1', enabled: 1, in_config: true, listening: true },
