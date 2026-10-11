@@ -6,6 +6,10 @@
 
 ### Changed (2026-10-11)
 
+- 部署内核版本默认锁定为已验证的 `1.14.3`，可通过 `PANEL_SINGBOX_VERSION` 覆盖；安装二进制时采用暂存文件原子替换。
+- 免域名自签证书节点新增 SHA-256/SPKI 指纹管理，Sing-box 出站使用公钥固定验证，不再无条件关闭 TLS 校验。
+- GitHub CI 增加 Docker 构建与 HTTP 健康接口冒烟测试。
+
 - 将内核相关运行逻辑改为 Sing-box，新增原生 inbound/outbound JSON 生成、安装、配置暂存校验与 systemd 失败回滚。
 - 部署组合改为免自有域名（Reality、IP + 自签证书、Cloudflare 临时隧道）。
 - 增加 5 秒轻量巡检、60 秒完整巡检、SSH 健康连接池、SSE 更新和 CPU / 内存 / 网络速率采样。
