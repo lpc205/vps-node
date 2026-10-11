@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS server_status (
   service_active INTEGER NOT NULL DEFAULT 0,
   config_present INTEGER NOT NULL DEFAULT 0,
   config_match INTEGER NOT NULL DEFAULT 0,
+  config_unsupported INTEGER NOT NULL DEFAULT 0,
   ports_listening INTEGER NOT NULL DEFAULT 0,
   tunnel_required INTEGER NOT NULL DEFAULT 0,
   tunnel_cloudflared_present INTEGER NOT NULL DEFAULT 0,
@@ -188,6 +189,9 @@ if (!serverColumns.some((column) => column.name === 'nginx_port')) {
 }
 
 const statusColumns = db.prepare('PRAGMA table_info(server_status)').all();
+if (!statusColumns.some((column) => column.name === 'config_unsupported')) {
+  db.exec('ALTER TABLE server_status ADD COLUMN config_unsupported INTEGER NOT NULL DEFAULT 0');
+}
 if (!statusColumns.some((column) => column.name === 'xray_bin_present')) {
   db.exec('ALTER TABLE server_status ADD COLUMN xray_bin_present INTEGER NOT NULL DEFAULT 0');
   db.exec('UPDATE server_status SET xray_bin_present = xray_installed');
@@ -758,6 +762,7 @@ export function upsertServerStatus(serverId, status) {
     service_active: status.service_active ? 1 : 0,
     config_present: status.config_present ? 1 : 0,
     config_match: status.config_match ? 1 : 0,
+    config_unsupported: status.config_unsupported ? 1 : 0,
     ports_listening: status.ports_listening ? 1 : 0,
     tunnel_required: status.tunnel_required ? 1 : 0,
     tunnel_cloudflared_present: status.tunnel_cloudflared_present ? 1 : 0,
@@ -772,10 +777,10 @@ export function upsertServerStatus(serverId, status) {
   db.prepare(`
     INSERT INTO server_status (
       server_id, ssh_reachable, xray_installed, xray_bin_present, service_active, config_present,
-      config_match, ports_listening, tunnel_required, tunnel_cloudflared_present, tunnel_active,
+      config_match, config_unsupported, ports_listening, tunnel_required, tunnel_cloudflared_present, tunnel_active,
       last_checked_at, last_error, node_status_json,
       failure_count, next_check_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(server_id) DO UPDATE SET
       ssh_reachable = excluded.ssh_reachable,
       xray_installed = excluded.xray_installed,
@@ -783,6 +788,7 @@ export function upsertServerStatus(serverId, status) {
       service_active = excluded.service_active,
       config_present = excluded.config_present,
       config_match = excluded.config_match,
+      config_unsupported = excluded.config_unsupported,
       ports_listening = excluded.ports_listening,
       tunnel_required = excluded.tunnel_required,
       tunnel_cloudflared_present = excluded.tunnel_cloudflared_present,
@@ -794,7 +800,7 @@ export function upsertServerStatus(serverId, status) {
       next_check_at = excluded.next_check_at,
       updated_at = excluded.updated_at
   `).run(serverId, data.ssh_reachable, data.xray_installed, data.xray_bin_present, data.service_active, data.config_present,
-    data.config_match, data.ports_listening, data.tunnel_required, data.tunnel_cloudflared_present, data.tunnel_active,
+    data.config_match, data.config_unsupported, data.ports_listening, data.tunnel_required, data.tunnel_cloudflared_present, data.tunnel_active,
     data.last_checked_at, data.last_error, data.node_status_json,
     data.failure_count, data.next_check_at, data.updated_at);
   return getServerStatus(serverId);
