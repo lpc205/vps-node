@@ -9,7 +9,7 @@ import {
   tunnelRequired,
   withSelfSignedPaths
 } from './argo.js';
-import { getServerRecord, updateServerArgoDomain } from './db.js';
+import { getServerRecord, updateServerArgoDomain, updateServerTlsFingerprints } from './db.js';
 
 
 const PROBE_SCRIPT = `
@@ -48,6 +48,14 @@ fi
 const INSTALL_SCRIPT = `
 set -e
 SINGBOX_BIN="/usr/local/bin/sing-box"
+if [ -f /etc/systemd/system/sing-box.service ] && ! grep -q 'managed by VPS-Node' /etc/systemd/system/sing-box.service; then
+  echo 'UNMANAGED_SINGBOX_SERVICE_FOUND: refusing to alter an existing service'
+  exit 1
+fi
+if [ -f /etc/init.d/sing-box ] && ! grep -q 'managed by VPS-Node' /etc/init.d/sing-box; then
+  echo 'UNMANAGED_SINGBOX_SERVICE_FOUND: refusing to alter an existing service'
+  exit 1
+fi
 if [ -x "$SINGBOX_BIN" ] && [ "$SINGBOX_FORCE" != "1" ] && "$SINGBOX_BIN" version >/dev/null 2>&1; then
   echo "INSTALL_STATE=already-installed"
 else
@@ -59,30 +67,34 @@ else
     i386|i686) SINGBOX_ARCH="386" ;;
     *) echo "UNSUPPORTED_ARCH=$ARCH"; exit 1 ;;
   esac
-  if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
+  if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
       DEBIAN_FRONTEND=noninteractive apt-get update -qq
-      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates tar
-    elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates tar
-    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates tar
-    elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates tar
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates tar openssl
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates tar openssl
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates tar openssl
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates tar openssl
     else echo "DEPENDENCIES_MISSING"; exit 1; fi
   fi
-  RELEASE="$(curl -fsSL --connect-timeout 10 --max-time 30 https://api.github.com/repos/SagerNet/sing-box/releases/latest)"
-  VERSION="$(printf '%s' "$RELEASE" | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\\1/')"
-  test -n "$VERSION" || { echo "VERSION_RESOLUTION_FAILED"; exit 1; }
+  VERSION="$SINGBOX_VERSION"
+  test -n "$VERSION" || { echo "SINGBOX_VERSION_MISSING"; exit 1; }
   URL="https://github.com/SagerNet/sing-box/releases/download/v$VERSION/sing-box-$VERSION-linux-$SINGBOX_ARCH.tar.gz"
   mkdir -p /var/tmp/vps-node-singbox /usr/local/bin /usr/local/etc/sing-box
   curl -fL --retry 2 --connect-timeout 10 --max-time 120 -o /var/tmp/vps-node-singbox/archive.tar.gz "$URL"
   tar -xzf /var/tmp/vps-node-singbox/archive.tar.gz -C /var/tmp/vps-node-singbox
   EXTRACTED="$(find /var/tmp/vps-node-singbox -type f -name sing-box | head -1)"
   test -n "$EXTRACTED" && "$EXTRACTED" version >/dev/null 2>&1 || { echo "SINGBOX_BINARY_CHECK=failed"; exit 1; }
-  install -m 0755 "$EXTRACTED" "$SINGBOX_BIN"
+  install -m 0755 "$EXTRACTED" "/usr/local/bin/.sing-box-$VERSION.new"
+  mv -f "/usr/local/bin/.sing-box-$VERSION.new" "$SINGBOX_BIN"
   rm -rf /var/tmp/vps-node-singbox
   echo "INSTALL_STATE=installed"
 fi
 mkdir -p /usr/local/etc/sing-box
 if command -v systemctl >/dev/null 2>&1; then
+  if [ -f /etc/systemd/system/sing-box.service ] && ! grep -q 'managed by VPS-Node' /etc/systemd/system/sing-box.service; then
+    echo 'UNMANAGED_SINGBOX_SERVICE_FOUND: refusing to overwrite an existing service'
+    exit 1
+  fi
   cat > /etc/systemd/system/sing-box.service <<'SERVICE'
 [Unit]
 Description=Sing-box Proxy Service (managed by VPS-Node)
@@ -102,6 +114,7 @@ SERVICE
 elif command -v rc-service >/dev/null 2>&1; then
   cat > /etc/init.d/sing-box <<'OPENRC'
 #!/sbin/openrc-run
+# managed by VPS-Node
 name="sing-box"
 command="/usr/local/bin/sing-box"
 command_args="run -c /usr/local/etc/sing-box/config.json"
@@ -113,6 +126,7 @@ OPENRC
   chmod 0755 /etc/init.d/sing-box
   rc-update add sing-box default >/dev/null 2>&1 || true
 fi
+touch /usr/local/etc/sing-box/.vps-node-managed
 echo "SINGBOX_VERSION=$("$SINGBOX_BIN" version 2>/dev/null | head -1)"
 `;
 export async function probeServer(server) {
@@ -143,7 +157,9 @@ export async function probeServer(server) {
 }
 
 export async function installSingbox(server, { force = false } = {}) {
-  const prefix = force ? 'SINGBOX_FORCE=1\n' : 'SINGBOX_FORCE=0\n';
+  const version = String(process.env.PANEL_SINGBOX_VERSION || '1.14.3');
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('invalid PANEL_SINGBOX_VERSION');
+  const prefix = `SINGBOX_FORCE=${force ? '1' : '0'}\nSINGBOX_VERSION=${version}\n`;
   const result = await runChecked(runSudo(server, prefix + INSTALL_SCRIPT, { timeout: 120000 }));
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
@@ -210,6 +226,11 @@ echo "SINGBOX_RESTARTED=ok"
 }
 
 const UNINSTALL_SCRIPT = `
+set -e
+if [ ! -f /usr/local/etc/sing-box/.vps-node-managed ]; then
+  echo 'UNMANAGED_SINGBOX_INSTALLATION: refusing removal'
+  exit 1
+fi
 set +e
 
 # Remove only the Singbox installation managed by this panel.
@@ -232,6 +253,7 @@ rm -f /usr/local/etc/sing-box/config.json
 rmdir /etc/sing-box >/dev/null 2>&1 || true
 rmdir /usr/local/etc/sing-box >/dev/null 2>&1 || true
 rm -f /var/log/sing-box.log
+rm -f /usr/local/etc/sing-box/.vps-node-managed
 echo "SINGBOX_UNINSTALLED=ok"
 `;
 
@@ -275,19 +297,7 @@ elif command -v rc-service >/dev/null 2>&1; then
 else
   echo "SINGBOX_ACTIVE=unknown"
 fi
-CONFIG_PATH=""
-if command -v systemctl >/dev/null 2>&1; then
-  CONFIG_PATH="$(systemctl show -p ExecStart --value sing-box 2>/dev/null | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
-fi
-if [ -z "$CONFIG_PATH" ] && command -v ps >/dev/null 2>&1; then
-  CONFIG_PATH="$(ps -ef 2>/dev/null | grep '[s]ing-box run' | head -1 | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
-fi
-if [ -z "$CONFIG_PATH" ]; then
-  for CANDIDATE in /usr/local/etc/sing-box/config.json /etc/sing-box/config.json; do
-    if [ -f "$CANDIDATE" ]; then CONFIG_PATH="$CANDIDATE"; break; fi
-  done
-fi
-if [ -z "$CONFIG_PATH" ]; then CONFIG_PATH="/usr/local/etc/sing-box/config.json"; fi
+CONFIG_PATH="/usr/local/etc/sing-box/config.json"
 echo "CONFIG_PATH=$CONFIG_PATH"
 if [ -f "$CONFIG_PATH" ]; then
   echo "CONFIG_EXISTS=yes"
@@ -527,6 +537,21 @@ fi
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
 
+const TLS_CERT_FINGERPRINT_SCRIPT = `
+set -e
+CERT="/usr/local/etc/sing-box/cert/cert.pem"
+test -s "$CERT"
+echo "TLS_CERT_SHA256=$(openssl x509 -in "$CERT" -noout -fingerprint -sha256 | sed 's/.*=//' | tr '[:lower:]' '[:upper:]')"
+echo "TLS_SPKI_SHA256=$(openssl x509 -in "$CERT" -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64 -A)"
+`;
+
+async function captureTlsFingerprints(server) {
+  const result = await runChecked(runSudo(server, TLS_CERT_FINGERPRINT_SCRIPT, { timeout: 12000 }));
+  const lines = parseStatusOutput(result.stdout);
+  if (!lines.TLS_SPKI_SHA256 || !lines.TLS_CERT_SHA256) throw new Error('TLS 证书指纹读取失败');
+  return { spki: lines.TLS_SPKI_SHA256, certSha256: lines.TLS_CERT_SHA256 };
+}
+
 export async function deployServer(server, nodes, options = {}) {
   const routes = options.routes || [];
   const enabledNodes = nodes.filter((node) => node.enabled !== 0 && node.enabled !== false);
@@ -538,11 +563,13 @@ export async function deployServer(server, nodes, options = {}) {
     return result;
   };
 
-  if (needsSelfSignedCert(enabledNodes)) {
-    const sni = enabledNodes.find((node) => node.self_signed === 1 || node.protocol === 'hysteria2')?.sni || 'localhost';
-    await step('certificate', () => runChecked(runSudo(server, buildCertificateScript(undefined, undefined, sni), { timeout: 60000 })));
-  }
   await step('install-singbox', () => installSingbox(server, options));
+  if (needsSelfSignedCert(enabledNodes)) {
+    const sni = enabledNodes.find((node) => node.self_signed === 1 || ['hysteria2', 'tuic', 'anytls', 'trojan'].includes(node.protocol))?.sni || 'localhost';
+    await step('certificate', () => runChecked(runSudo(server, buildCertificateScript(undefined, undefined, sni), { timeout: 60000 })));
+    const pins = await captureTlsFingerprints(server);
+    updateServerTlsFingerprints(server.id, pins);
+  }
   await step('write-config', () => writeSingboxConfig(server, nodes, routes));
   const restart = await step('restart-singbox', () => restartSingbox(server));
 
@@ -605,3 +632,12 @@ export async function quickSingboxStatus(server) {
     return { ok: false, checked_at: new Date().toISOString(), error: classifySshError(error), elapsed_ms: Date.now() - startedAt };
   }
 }
+
+// Exposes static templates for non-executing shell syntax validation in CI.
+export const shellTemplatesForTests = Object.freeze({
+  install: INSTALL_SCRIPT,
+  uninstall: UNINSTALL_SCRIPT,
+  fullStatus: STATUS_SCRIPT,
+  quickStatus: QUICK_STATUS_SCRIPT,
+  fingerprint: TLS_CERT_FINGERPRINT_SCRIPT
+});

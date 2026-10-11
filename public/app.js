@@ -304,6 +304,8 @@ const STATUS_META = {
   service_stopped: { label: '服务停止', tone: 'amber' },
   offline: { label: '离线', tone: 'red' },
   config_mismatch: { label: '配置不一致', tone: 'amber' },
+  migration_required: { label: '旧节点需迁移', tone: 'amber' },
+  disabled: { label: '已禁用', tone: 'muted' },
   config_missing: { label: '配置缺失', tone: 'red' },
   binary_missing: { label: '二进制缺失', tone: 'red' },
   tunnel_down: { label: '隧道未运行', tone: 'amber' },
@@ -328,8 +330,10 @@ function statusPill(state, titleExtra = '') {
 }
 
 function nodeLiveState(serverItem, node) {
+  if (node.enabled === 0 || node.enabled === false) return 'disabled';
+  if (node.role === 'outbound') return serverItem?.state === 'offline' ? 'offline' : 'unknown';
   const state = serverItem?.state || 'unknown';
-  if (['offline', 'binary_missing', 'config_missing', 'config_mismatch', 'service_stopped', 'tunnel_down', 'ports_down'].includes(state)) return state;
+  if (['offline', 'binary_missing', 'config_missing', 'config_mismatch', 'migration_required', 'service_stopped', 'tunnel_down', 'ports_down'].includes(state)) return state;
   if (state !== 'running') return 'unknown';
   const nodeStatus = serverItem?.nodes?.find((item) => item.id === node.id);
   if (!nodeStatus) return 'unknown';
@@ -360,7 +364,7 @@ function repairActionLabel(driftType) {
 
 function cachedStatusTitle(live) {
   const time = formatTime(live?.status?.last_checked_at);
-  return `缓存 · ${time}`;
+  return `${live?.state === 'migration_required' ? (live?.status?.last_error || '旧节点配置需人工转换') + ' · ' : ''}缓存 · ${time}`;
 }
 
 function isAutoRepairEnabled() {
@@ -500,7 +504,7 @@ function renderOverview({ motion = true } = {}) {
   animateNumber($('#metric-nodes'), state.stats.nodes || 0);
   animateNumber($('#metric-enabled'), state.stats.enabledNodes || 0);
 
-  const attentionStates = new Set(['offline', 'service_stopped', 'config_mismatch', 'config_missing', 'binary_missing', 'ports_down']);
+  const attentionStates = new Set(['offline', 'service_stopped', 'migration_required', 'config_mismatch', 'config_missing', 'binary_missing', 'ports_down']);
   const attentionCount = state.servers.filter((server) => attentionStates.has(state.statuses[server.id]?.state)).length;
   animateNumber(document.querySelector('#metric-attention'), attentionCount);
 

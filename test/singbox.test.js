@@ -6,12 +6,13 @@ import {
 } from '../src/singbox.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
 const testDataDir = mkdtempSync(join(tmpdir(), 'vps-health-test-'));
 process.env.DATA_DIR = testDataDir;
 
-const { buildNodeStatuses } = await import('../src/remote.js');
+const { buildNodeStatuses, shellTemplatesForTests } = await import('../src/remote.js');
 const db = await import('../src/db.js');
 after(() => { db.closeDatabase(); rmSync(testDataDir, { recursive: true, force: true }); });
 
@@ -126,4 +127,47 @@ test('Share link output uses the right proxy protocol', () => {
   const link = nodeLinks(makeNode(), { host: '198.51.100.10' })[0].link;
   assert.equal(link.startsWith('vless://'), true);
   assert.match(link, /pbk=public-key/);
+});
+
+
+test('TLS outbound with an IP cannot silently disable verification', () => {
+  const inbound = makeNode();
+  const remote = makeNode({
+    id: 'out-tls', role: 'outbound', protocol: 'hysteria2', network: 'tcp',
+    security: 'tls', sni: '', self_signed: 1
+  });
+  assert.throws(() => buildSingboxConfig([inbound], [{
+    inbound_node_id: inbound.id, outbound_node: remote,
+    outbound_server: { host: '203.0.113.20' }
+  }]), /证书公钥指纹/);
+});
+
+test('TLS outbound uses persisted SPKI pin without insecure TLS', () => {
+  const inbound = makeNode();
+  const spki = Buffer.alloc(32, 7).toString('base64');
+  const remote = makeNode({
+    id: 'out-tls', role: 'outbound', protocol: 'hysteria2', network: 'tcp',
+    security: 'tls', sni: '', self_signed: 1, tls_public_key_sha256: spki
+  });
+  const config = buildSingboxConfig([inbound], [{
+    inbound_node_id: inbound.id, outbound_node: remote,
+    outbound_server: { host: '203.0.113.20' }
+  }]);
+  assert.deepEqual(config.outbounds[2].tls.certificate_public_key_sha256, [spki]);
+  assert.equal(config.outbounds[2].tls.insecure, false);
+});
+
+test('Self-signed TLS share links include certificate fingerprint without skipping verification', () => {
+  const fingerprint = Array(32).fill('AB').join(':');
+  const node = makeNode({ protocol: 'hysteria2', security: 'tls', sni: 'localhost',
+    tls_cert_fingerprint_sha256: fingerprint });
+  const link = nodeLinks(node, { host: '203.0.113.20' })[0].link;
+  assert.ok(link.includes('hpkp='));
+  assert.ok(!link.includes('insecure=1'));
+});
+
+test('remote install and health shell templates are valid POSIX sh (no VPS execution)', { skip: process.platform === 'win32' }, () => {
+  for (const [name, script] of Object.entries(shellTemplatesForTests)) {
+    assert.doesNotThrow(() => execFileSync('sh', ['-n'], { input: script, timeout: 3000 }), name);
+  }
 });
