@@ -240,6 +240,7 @@ async function checkServer(server) {
       const inboundNodes = newNodeStatuses.filter((n) => n.role !== 'outbound' && n.enabled !== 0 && n.enabled !== false);
       record = {
         ...(cached || {}), ssh_reachable: 1, service_active: result.service_active ? 1 : 0,
+        tunnel_active: cached?.tunnel_required ? (result.argo_active ? 1 : 0) : (cached?.tunnel_active || 0),
         ports_listening: inboundNodes.every((node) => node.listening) ? 1 : 0,
         last_checked_at: result.checked_at, last_error: '', node_status: newNodeStatuses
       };
