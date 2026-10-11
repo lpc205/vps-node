@@ -68,21 +68,25 @@ else
     elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates tar
     else echo "DEPENDENCIES_MISSING"; exit 1; fi
   fi
-  RELEASE="$(curl -fsSL --connect-timeout 10 --max-time 30 https://api.github.com/repos/SagerNet/sing-box/releases/latest)"
-  VERSION="$(printf '%s' "$RELEASE" | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\\1/')"
-  test -n "$VERSION" || { echo "VERSION_RESOLUTION_FAILED"; exit 1; }
+  VERSION="$SINGBOX_VERSION"
+  test -n "$VERSION" || { echo "SINGBOX_VERSION_MISSING"; exit 1; }
   URL="https://github.com/SagerNet/sing-box/releases/download/v$VERSION/sing-box-$VERSION-linux-$SINGBOX_ARCH.tar.gz"
   mkdir -p /var/tmp/vps-node-singbox /usr/local/bin /usr/local/etc/sing-box
   curl -fL --retry 2 --connect-timeout 10 --max-time 120 -o /var/tmp/vps-node-singbox/archive.tar.gz "$URL"
   tar -xzf /var/tmp/vps-node-singbox/archive.tar.gz -C /var/tmp/vps-node-singbox
   EXTRACTED="$(find /var/tmp/vps-node-singbox -type f -name sing-box | head -1)"
   test -n "$EXTRACTED" && "$EXTRACTED" version >/dev/null 2>&1 || { echo "SINGBOX_BINARY_CHECK=failed"; exit 1; }
-  install -m 0755 "$EXTRACTED" "$SINGBOX_BIN"
+  install -m 0755 "$EXTRACTED" "/usr/local/bin/.sing-box-${VERSION}.new"
+  mv -f "/usr/local/bin/.sing-box-${VERSION}.new" "$SINGBOX_BIN"
   rm -rf /var/tmp/vps-node-singbox
   echo "INSTALL_STATE=installed"
 fi
 mkdir -p /usr/local/etc/sing-box
 if command -v systemctl >/dev/null 2>&1; then
+  if [ -f /etc/systemd/system/sing-box.service ] && ! grep -q 'managed by VPS-Node' /etc/systemd/system/sing-box.service; then
+    echo 'UNMANAGED_SINGBOX_SERVICE_FOUND: refusing to overwrite an existing service'
+    exit 1
+  fi
   cat > /etc/systemd/system/sing-box.service <<'SERVICE'
 [Unit]
 Description=Sing-box Proxy Service (managed by VPS-Node)
@@ -143,7 +147,9 @@ export async function probeServer(server) {
 }
 
 export async function installSingbox(server, { force = false } = {}) {
-  const prefix = force ? 'SINGBOX_FORCE=1\n' : 'SINGBOX_FORCE=0\n';
+  const version = String(process.env.PANEL_SINGBOX_VERSION || '1.14.3');
+  if (!/^\\d+\\.\\d+\\.\\d+$/.test(version)) throw new Error('invalid PANEL_SINGBOX_VERSION');
+  const prefix = `SINGBOX_FORCE=${force ? '1' : '0'}\\nSINGBOX_VERSION=${version}\\n`;
   const result = await runChecked(runSudo(server, prefix + INSTALL_SCRIPT, { timeout: 120000 }));
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
