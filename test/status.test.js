@@ -1,7 +1,16 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildStatusRecord, deriveDriftType, deriveServerState } from '../src/status.js';
-import { repairActionFor } from '../src/repair.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+const testDataDir = mkdtempSync(join(tmpdir(), 'vps-health-test-'));
+process.env.DATA_DIR = testDataDir;
+
+const { buildStatusRecord, deriveDriftType, deriveServerState } = await import('../src/status.js');
+const { repairActionFor } = await import('../src/repair.js');
+const db = await import('../src/db.js');
+after(() => { db.closeDatabase(); rmSync(testDataDir, { recursive: true, force: true }); });
 
 test('deriveServerState covers drift and healthy states', () => {
   assert.equal(deriveServerState(null), 'unknown');
