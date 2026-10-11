@@ -558,3 +558,48 @@ export async function deployServer(server, nodes, options = {}) {
   const status = await step('status', () => singboxStatus(server, nodes));
   return { ok: true, restart, tunnel, status };
 }
+
+const QUICK_STATUS_SCRIPT = `
+set +e
+if command -v systemctl >/dev/null 2>&1; then
+  printf 'SERVICE_ACTIVE=%s\\n' "$(systemctl is-active sing-box 2>/dev/null || echo inactive)"
+elif command -v rc-service >/dev/null 2>&1; then
+  if rc-service sing-box status >/dev/null 2>&1; then echo 'SERVICE_ACTIVE=started'; else echo 'SERVICE_ACTIVE=stopped'; fi
+else
+  if pgrep -f '^/usr/local/bin/sing-box run' >/dev/null 2>&1; then echo 'SERVICE_ACTIVE=started'; else echo 'SERVICE_ACTIVE=stopped'; fi
+fi
+if command -v ss >/dev/null 2>&1; then
+  printf 'TCP_PORTS=%s\\n' "$(ss -lntH 2>/dev/null | awk '{n=split($4,a,":");print a[n]}' | sort -un | tr '\\n' ',')"
+  printf 'UDP_PORTS=%s\\n' "$(ss -lnuH 2>/dev/null | awk '{n=split($4,a,":");print a[n]}' | sort -un | tr '\\n' ',')"
+fi
+awk '/^cpu / {idle=$5+$6; total=0; for(i=2;i<=NF;i++) total+=$i; printf "CPU_TOTAL=%.0f\\nCPU_IDLE=%.0f\\n",total,idle}' /proc/stat 2>/dev/null
+awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "MEM_TOTAL_KB=%.0f\\nMEM_AVAILABLE_KB=%.0f\\n",t,a}' /proc/meminfo 2>/dev/null
+awk 'NR==1 {print "LOAD_1M="$1}' /proc/loadavg 2>/dev/null
+awk 'NR>2 {gsub(/:/,"",$1); if($1!="lo"){rx+=$2;tx+=$10}} END {printf "NET_RX_BYTES=%.0f\\nNET_TX_BYTES=%.0f\\n",rx,tx}' /proc/net/dev 2>/dev/null
+echo 'QUICK_STATUS_DONE=yes'
+`;
+
+export async function quickSingboxStatus(server) {
+  const startedAt = Date.now();
+  try {
+    const result = await runScript(server, QUICK_STATUS_SCRIPT, { reuse: true, timeout: 7500 });
+    if (result.code !== 0) throw new Error(result.stderr || 'status probe failed');
+    const fields = parseStatusOutput(result.stdout);
+    if (fields.QUICK_STATUS_DONE !== 'yes') throw new Error('incomplete status probe');
+    return {
+      ok: true, checked_at: new Date().toISOString(),
+      service_active: ['active', 'started'].includes(fields.SERVICE_ACTIVE),
+      tcp_ports: parsePortList(fields.TCP_PORTS),
+      udp_ports: parsePortList(fields.UDP_PORTS),
+      ports_available: fields.TCP_PORTS !== undefined && fields.UDP_PORTS !== undefined,
+      cpu_total: Number(fields.CPU_TOTAL || 0), cpu_idle: Number(fields.CPU_IDLE || 0),
+      memory_total_kb: Number(fields.MEM_TOTAL_KB || 0),
+      memory_available_kb: Number(fields.MEM_AVAILABLE_KB || 0),
+      load_1m: Number(fields.LOAD_1M || 0),
+      net_rx_bytes: Number(fields.NET_RX_BYTES || 0),
+      net_tx_bytes: Number(fields.NET_TX_BYTES || 0), elapsed_ms: Date.now() - startedAt
+    };
+  } catch (error) {
+    return { ok: false, checked_at: new Date().toISOString(), error: classifySshError(error), elapsed_ms: Date.now() - startedAt };
+  }
+}
