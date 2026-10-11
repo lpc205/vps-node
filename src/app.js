@@ -84,8 +84,9 @@ const deployJobs = new Map();
 function deployStepPlan(nodes) {
   const enabled = nodes.filter((node) => node.enabled !== 0 && node.enabled !== false);
   const ids = [];
+  ids.push('install-singbox');
   if (needsSelfSignedCert(enabled)) ids.push('certificate');
-  ids.push('install-singbox', 'write-config', 'restart-singbox');
+  ids.push('write-config', 'restart-singbox');
   if (tunnelRequired(null, enabled)) ids.push('nginx', 'cloudflared', 'tunnel-domain');
   ids.push('status');
   return ids.map((id) => ({ id, label: DEPLOY_STEP_LABELS[id], state: 'pending' }));
