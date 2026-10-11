@@ -1,197 +1,105 @@
-# VPS 节点控制台
+# VPS-Node · Sing-box 节点控制台
 
-一个运行在本地或 Docker 中的可视化 VPS 管理面板：通过 SSH 连接你的 VPS，在网页上部署、编辑、检查和维护 Xray 节点，并生成客户端分享链接和动态订阅。
+在本地或 Docker 中运行的中文 VPS 管理面板。通过 SSH 远程部署与维护 **Sing-box**，提供免自有域名的节点组合、Web 终端、动态订阅、路由以及近实时状态面板。
 
-## 为什么这样设计
+> 此分支为 Xray → Sing-box 的破坏性内核迁移。**升级容器不等于迁移远端节点；切勿未经备份直接覆盖生产部署。**
 
-- 面板只运行在本地，VPS 上不安装任何常驻控制端，只安装 Xray 本身。
-- 所有远程操作都是“面板发起 SSH 命令”，适合轻量 VPS，也方便迁移和审计。
-- 服务器密码、私钥、sudo 密码保存在本机 SQLite 外的密钥文件中，使用 AES-256-GCM 加密后再落盘。
-- 支持 Docker 运行，数据目录挂载到宿主机，删除容器不会丢配置。
-- 节点配置统一由面板生成 `config.json`，避免手工 SSH 修改容易出错。
-- 面板默认没有登录鉴权，只适合本机、可信局域网、VPN 或受保护的反向代理环境。
+## 核心架构
 
-## 已实现
+- 面板安装在你自己的 Docker / NAS / PC 中；VPS 上只安装 Sing-box 本体，只有选择 Argo 临时隧道时才额外安装 Nginx、cloudflared。
+- SSH 密码、私钥与 sudo 凭据由面板加密保存在本机数据目录；Web 前端不获取这些凭据。
+- 不要求准备自有域名。直连方案使用 IP + Reality 或自动生成自签证书；WebSocket 隧道使用 Cloudflare Quick Tunnel 提供的随机 `trycloudflare.com` 域名。
+- **面板仍没有内置登录鉴权。** 只允许可信局域网、VPN 或具有独立认证的 HTTPS 反向代理访问，不要直接暴露公网。
 
-### 服务器和终端
+## 可创建的部署组合
 
-- SSH 密码或私钥认证，支持 sudo 密码。
-- 粘贴 `root@IP:端口 密码`、`IP:端口:用户名:密码`、`IP 端口 用户名 密码` 等格式快速添加服务器。
-- 服务器状态检查：SSH 连通性、Xray 二进制、服务状态、配置文件、端口监听和最近检查时间。
-- WebSocket + xterm.js SSH 终端，支持输入、窗口调整、关闭、全屏和重新连接。
-- 服务器日志查看和危险操作确认。
+| 组合 | 连接方式 | 证书 / 域名要求 |
+| --- | --- | --- |
+| VLESS + Reality Vision | TCP 直连 | 无需自有域名；使用伪装目标的 SNI |
+| VLESS + gRPC + Reality | gRPC 直连 | 无需自有域名 |
+| VLESS + HTTP + Reality | HTTP 传输 | 无需自有域名 |
+| Hysteria2 | UDP 直连 | 自动自签证书 |
+| TUIC V5 | UDP 直连 | 自动自签证书 |
+| AnyTLS | TLS 直连 | 自动自签证书 |
+| Trojan Direct | TLS 直连 | 自动自签证书 |
+| Shadowsocks | TCP / UDP | 无需证书；支持 2022 加密方法 |
+| VLESS + WebSocket + Argo | Quick Tunnel | 隧道自动分配临时域名 |
+| VMess + WebSocket + Argo | Quick Tunnel | 隧道自动分配临时域名 |
+| SOCKS5 | 仅用作出站 | 不作为公网入站 |
 
-### 节点和路由
+不支持旧 Xray 专属的 XHTTP / HTTPUpgrade 组合。需要自己准备 DNS 解析、正式域名证书或 Cloudflare 固定隧道认证信息的方案也不出现在部署预设中。
 
-- 支持 VMess、VLESS、Trojan、Shadowsocks 和 SOCKS5。
-- 支持入站 / 出站角色，按角色查看节点。
-- 支持 TCP、WebSocket、gRPC 和 HTTPUpgrade，以及 TLS、Reality 和无加密。
-- 节点支持多个客户端，自动生成 UUID 或密码。
-- Reality X25519 密钥对在面板本地生成，不依赖 VPS。
-- 内置常见 Reality 伪装目标，可随机轮换 `dest`、`serverNames` 和 SNI。
-- 路由页面可以把入站节点连接到出站节点，并在入站服务器上生成对应 Xray 出口和路由规则。
-- 支持部署全部节点、分享链接和 v2rayN 等客户端导入。
+**安全提醒：** 使用自签证书的分享链接目前仍以客户端不校验证书链的兼容参数输出；这意味着 TLS **未获得严格的服务器身份认证**。不要把它误认为等同于有效证书或公钥固定。正式部署建议补充证书指纹固定验证。Reality 和原生 Shadowsocks 不受这一自签证书限制。
 
-### 状态巡检和修复
+**Quick Tunnel 限制：** 临时隧道适合体验和轻量用途，不保证永久稳定；服务重启后临时域名可能更换，订阅会随重新部署更新。
 
-- 后台按固定间隔自动巡检服务器，默认 60 秒，可通过 `PANEL_STATUS_INTERVAL` 调整。
-- 通过 `PANEL_STATUS_CONCURRENCY` 限制 SSH 并发，失败时指数退避。
-- 状态缓存区分运行中、服务停止、配置不一致、配置缺失、二进制缺失、端口异常、离线和未知。
-- 本地生成期望配置并与 VPS 上的 `config.json` 做 SHA-256 一致性比较。
-- 一键修复按漂移类型选择恢复服务、恢复配置或重新部署，并写入审计日志。
-- 自动修复默认关闭；巡检和状态检查本身都是只读操作。
+## 近实时状态监控
 
-### 订阅
+监控运行在面板进程中，不在 VPS 上安装常驻 Agent。
 
-- 订阅功能集成在总览页，不单独占用导航页面。
-- 自动包含所有 `role = inbound` 且 `enabled = 1` 的节点，不需要手动选择节点。
-- 新增、编辑、启用或禁用入口节点后，订阅内容自动变化。
-- Token 使用密码学安全随机值生成，数据库只保存 Token 哈希，支持禁用、过期和重新生成。
-- 支持 Base64 和原始 URI 两种格式，以及 VMess、VLESS、Trojan、Shadowsocks 和 SOCKS5。
+| 类型 | 策略 |
+| --- | --- |
+| 快速检查 | 默认每 5 秒，每台 VPS 复用 SSH 连接 |
+| 完整巡检 | 约每 60 秒检查 Sing-box 二进制、配置文件一致性、端口、隧道状态 |
+| 资源监控 | 5 秒周期采样 CPU、内存、负载、网卡字节数与网络速率 |
+| 前端更新 | SSE 推送变更；15 秒轮询兜底，重新打开页面立即同步 |
+| 失败退避 | 最高约 30 秒，避免离线 VPS 长时间无法恢复显示 |
+| 并发 | 默认 5，最大 10，可配置 |
 
-### 前端体验
+状态区分 SSH 可达、Sing-box 服务运行、配置一致性和 TCP/UDP 端口监听。**绿色状态不等于协议握手成功或端到端代理可用**；真实外部协议拨测仍需要额外的验证能力，不能凭监听端口断言节点完全正常。
 
-- 中文界面和 lucide 图标。
-- 亮色 / 暗色 / 跟随系统主题切换，并记住用户选择。
-- 卡片、弹窗、Toast 和页面切换使用克制的过渡动画。
-- 适配桌面、中等宽度和手机屏幕，避免横向滚动与内容截断。
+## 本地 / Docker 启动
 
-## 快速开始
-
-要求 Node.js `>= 22.5`。
-
-本地 Node.js 运行：
+需要 Node.js >=22.5。
 
 ```bash
-npm install
+npm ci
 npm start
+# 或开发模式：npm run dev
 ```
 
-打开 <http://127.0.0.1:3000>。
+打开 http://127.0.0.1:3000。
 
-Docker 运行：
+Docker：
 
 ```bash
 docker compose up -d --build
 ```
 
-默认映射为 `127.0.0.1:3000:3000`，打开 <http://127.0.0.1:3000>。数据保存在 `./data`，包含 `panel.db` 和加密密钥 `.secret`。
+默认仅映射本机 `127.0.0.1:3000:3000`。数据在 `./data`，含 SQLite 数据库和加密密钥文件，容器重建必须保留整个目录。
 
-### 飞牛 NAS 部署
+运行单元测试：`npm test`。
 
-飞牛部署目录使用用户 Docker 目录，例如：
+### 配置项
 
-```text
-/vol1/1000/Docker/vps-node-console
-```
-
-NAS 部署时建议：
-
-- 将项目源码和 Compose 配置放在用户 Docker 目录下。
-- 将面板数据绑定到项目目录内的 `data` 子目录。
-- 设置 `restart: unless-stopped`，让 NAS 重启后自动恢复。
-- ARM64 NAS 且无法访问 Docker Hub 时，提前准备匹配架构的 Node.js 运行时和 npm 依赖进行离线构建。
-
-本项目已在 ARM64 飞牛 NAS 上验证运行，局域网访问地址可以是 `http://NAS_IP:3000`。默认 Docker Compose 只绑定 `127.0.0.1`；如果需要局域网访问，应明确绑定到 NAS 局域网地址或 `0.0.0.0`，并确认 NAS 防火墙和访问网络可信。
-
-## 开发与贡献
-
-```bash
-npm install
-npm run dev   # 打开 http://127.0.0.1:3000
-npm test
-```
-
-项目遵循 Issue → 讨论 → 分支开发 → Pull Request → CI → Review → 合并 → 发版的迭代流程。详细约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，变更记录见 [CHANGELOG.md](CHANGELOG.md)，安全报告方式见 [SECURITY.md](SECURITY.md)。
-
-## 使用流程
-
-1. 在“服务器”页添加 VPS：填写主机、SSH 端口、用户名，密码或私钥任选。
-   - 也可以在“快速粘贴服务器信息”里粘贴连接信息，点击“识别并保存”直接添加。
-2. 非 root 用户需要填写 sudo 密码；root 用户不需要。
-3. 在“节点”页选择服务器，添加入站或出站节点和客户端。
-4. 点击“部署全部节点”完成 Xray 安装、配置写入和启动。
-5. 在节点卡片中点击“状态”查看实际运行情况，点击“分享”复制客户端链接。
-6. 在“路由”页选择入站和出站节点，连接后为入站服务器配置远程出口。
-7. 在总览页创建订阅，订阅会自动包含所有启用的入口节点。
-
-## 目录结构
-
-```text
-public/             前端静态面板
-src/
-  index.js          服务启动和 WebSocket 终端
-  app.js            Express 路由和静态资源
-  db.js             SQLite 表结构和 CRUD
-  crypto.js         AES-256-GCM 加解密
-  paths.js          数据目录解析
-  ssh.js            ssh2 连接和远程命令执行
-  remote.js         VPS 探测、安装、配置、重启、日志和状态
-  xray.js           Xray 配置、分享链接和 Reality 密钥对
-  status.js         自动状态巡检、状态派生和配置校验
-  repair.js         漂移修复和审计日志
-  subscriptions.js  动态订阅查询和格式转换
-test/               状态、Xray、路由和订阅测试
-Dockerfile
-docker-compose.yml
-```
-
-## API 摘要
-
-服务器和节点：
-
-- `GET /api/servers`、`POST /api/servers`、`PUT/DELETE /api/servers/:id`
-- `GET /api/servers/:id/status`、`POST /api/servers/:id/deploy`
-- `GET /api/servers/:id/logs`、`POST /api/servers/:id/x25519`
-- `GET /api/nodes`、`POST /api/servers/:id/nodes`、`PUT/DELETE /api/nodes/:id`
-
-状态和修复：
-
-- `GET /api/status`
-- `POST /api/servers/:id/repair`
-- `GET /api/repair-logs`
-
-路由、订阅和终端：
-
-- `GET/POST /api/routes`、`DELETE /api/routes/:id`
-- `GET /api/subscriptions`、`POST /api/subscriptions`
-- `GET/PUT/DELETE /api/subscriptions/:id`
-- `POST /api/subscriptions/:id/rotate|enable|disable`
-- `GET /api/subscriptions/:id/preview`
-- `GET /sub/:token`、`GET /sub/:token?format=base64|uri`
-- `WS /ws/terminal?serverId=...`
-
-## 配置项
-
-| 环境变量 | 默认值 | 说明 |
+| 环境变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `PORT` | `3000` | HTTP 服务端口 |
-| `DATA_DIR` | `./data` | SQLite 和加密密钥目录 |
-| `PANEL_STATUS_INTERVAL` | `60` | 状态巡检间隔，单位秒，最小 5 秒 |
-| `PANEL_STATUS_CONCURRENCY` | `3` | 同时巡检的 SSH 数量，范围 1-10 |
+| `PORT` | `3000` | Web 面板端口 |
+| `DATA_DIR` | `./data` | SQLite 与加密密钥 |
+| `PANEL_STATUS_INTERVAL` | `5` | 快速巡检间隔，秒，最小 5 |
+| `PANEL_STATUS_CONCURRENCY` | `5` | 巡检并发量，1～10 |
 
-## 测试
+## 从 Xray 版本升级
 
-```bash
-npm test
-```
+1. 备份旧容器的 `data/`，并记录当前 VPS 节点配置、端口和 Xray 服务状态。
+2. 单独在测试 Docker / 数据目录中验证此分支。**不要把当前运行的 Xray 自动卸载或覆盖。**
+3. 查看原有节点配置：Sing-box 与 Xray JSON 格式不同；旧的 XHTTP / HTTPUpgrade 等节点需要手动改为支持的组合。面板仍保留旧节点数据以供迁移，但不会假装旧配置可以直接运行。
+4. 在测试 VPS 上安装 Sing-box、生成配置并测试客户端实际连接；确认端口没有与旧 Xray 服务冲突。
+5. 确认全部新节点正常后，才自行安排停止 / 卸载旧 Xray（本项目不会在升级过程中自动删除旧内核）。
 
-测试覆盖状态派生、配置一致性、漂移修复、Reality 密钥对、节点分享链接、路由配置和订阅 Token 生命周期。
+写入配置时，会先在远端执行 `sing-box check -c` 校验暂存文件，校验不通过不替换线上配置。systemd 启动失败时会尝试恢复最近的 `config.json.bak`。
 
-## 安全注意
+## 核心代码
 
-- 默认 Docker 映射绑定到 `127.0.0.1`，避免局域网暴露；如果改为局域网绑定，必须限制访问范围。
-- 不要把 `data/.secret`、服务器密码、私钥、sudo 密码、订阅完整 Token 或本地数据库提交到 Git。
-- 面板自身目前没有登录鉴权，适合只在本机、可信局域网、VPN 或受保护的 HTTPS 反向代理后运行。
-- 订阅地址包含访问凭据；重新生成 Token 后旧地址立即失效。
-- 状态巡检和订阅接口不会自动连接 VPS；部署、路由连接和漂移修复才会执行远程操作。
-- 远程安装脚本需要服务器能访问 GitHub Release；如果网络受限，可后续增加自定义下载地址。
+- `src/singbox.js`：Sing-box 入站、出站、路由与节点分享链接
+- `src/remote.js`：SSH 探测、安装、配置校验与远程服务管理
+- `src/ssh.js`：SSH 执行与轻量探测专用连接池
+- `src/status.js`：快慢双周期巡检、资源采样、退避和状态推送
+- `src/status-events.js`：进程内事件总线
+- `src/argo.js`：Nginx、Cloudflared、临时隧道和自签证书
+- `src/db.js`：SQLite、节点 / 服务器管理与兼容旧数据
+- `src/app.js`：HTTP API、SSE 和路由
+- `public/`：中文界面
+- `test/`：自动化测试
 
-## 后续路线
-
-- 面板登录与操作审计日志
-- 单个节点单独部署 / 热更新，而不是始终整机重写配置
-- 多服务器批量状态巡检
-- 支持 3x-ui 既有配置迁移 / 兼容导入
-- 流量统计、在线客户端、二维码分享
-- Cloudflare 或自定义二进制下载源
+技术参考：[fscarmen/sing-box](https://github.com/fscarmen/sing-box)，配置规范以 [Sing-box 官方文档](https://sing-box.sagernet.org/configuration/) 为准。本项目没有直接在 VPS 上执行第三方一键脚本，而是独立生成配置并通过 SSH 管理。
