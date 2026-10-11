@@ -297,19 +297,7 @@ elif command -v rc-service >/dev/null 2>&1; then
 else
   echo "SINGBOX_ACTIVE=unknown"
 fi
-CONFIG_PATH=""
-if command -v systemctl >/dev/null 2>&1; then
-  CONFIG_PATH="$(systemctl show -p ExecStart --value sing-box 2>/dev/null | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
-fi
-if [ -z "$CONFIG_PATH" ] && command -v ps >/dev/null 2>&1; then
-  CONFIG_PATH="$(ps -ef 2>/dev/null | grep '[s]ing-box run' | head -1 | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
-fi
-if [ -z "$CONFIG_PATH" ]; then
-  for CANDIDATE in /usr/local/etc/sing-box/config.json /etc/sing-box/config.json; do
-    if [ -f "$CANDIDATE" ]; then CONFIG_PATH="$CANDIDATE"; break; fi
-  done
-fi
-if [ -z "$CONFIG_PATH" ]; then CONFIG_PATH="/usr/local/etc/sing-box/config.json"; fi
+CONFIG_PATH="/usr/local/etc/sing-box/config.json"
 echo "CONFIG_PATH=$CONFIG_PATH"
 if [ -f "$CONFIG_PATH" ]; then
   echo "CONFIG_EXISTS=yes"
