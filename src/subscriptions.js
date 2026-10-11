@@ -6,7 +6,7 @@ import {
 } from './db.js';
 import { listAllNodes } from './db.js';
 import { hashSubscriptionToken } from './subscription-token.js';
-import { nodeLinks } from './xray.js';
+import { nodeLinks } from './singbox.js';
 
 const PROTOCOL_PREFIXES = {
   vmess: 'vmess://',
@@ -14,7 +14,9 @@ const PROTOCOL_PREFIXES = {
   trojan: 'trojan://',
   shadowsocks: 'ss://',
   socks: 'socks://',
-  hysteria2: 'hysteria2://'
+  hysteria2: 'hysteria2://',
+  tuic: 'tuic://',
+  anytls: 'anytls://'
 };
 
 function nodeSummary(node, server) {
