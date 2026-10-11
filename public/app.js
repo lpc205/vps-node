@@ -1722,7 +1722,7 @@ function openNodeModal(serverId, node = null) {
   const tunnelCheckboxEl = $('input[name="tunnel"]');
   if (tunnelCheckboxEl) {
     tunnelCheckboxEl.addEventListener('change', () => {
-      applyProtocolVisibility(protocolSelect.value);
+      applyProtocolVisibility(presetById($('#node-preset-select')?.value).protocol);
     });
   }
 
