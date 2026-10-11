@@ -42,7 +42,8 @@ import {
   singboxLogs,
   singboxStatus
 } from './remote.js';
-import { deriveServerState, getStatusIntervalSeconds } from './status.js';
+import { deriveServerState, getStatusIntervalSeconds, getLiveMetrics } from './status.js';
+import { subscribeStatusChanges } from './status-events.js';
 import { deriveDriftType } from './status.js';
 import { performRepair, routesForServer } from './repair.js';
 import { generateRealityKeypair, nodeLinks } from './singbox.js';
@@ -227,6 +228,30 @@ app.get('/api/stats', (req, res) => {
   res.json(getStats());
 });
 
+app.get('/api/status/events', (req, res) => {
+  res.status(200);
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.flushHeaders?.();
+  res.write('retry: 1500\\n\\n');
+  const send = (serverId) => {
+    if (!res.destroyed) res.write(`event: status\\ndata: ${JSON.stringify({ server_id: serverId })}\\n\\n`);
+  };
+  const unsubscribe = subscribeStatusChanges(send);
+  const timer = setInterval(() => {
+    if (!res.destroyed) res.write(': keepalive\\n\\n');
+  }, 15000);
+  timer.unref?.();
+  req.on('close', () => {
+    clearInterval(timer);
+    unsubscribe();
+  });
+});
+
 app.get('/api/status', (req, res) => {
   const statusRows = new Map(listServerStatuses().map((row) => [row.server_id, row]));
   const servers = listServers().map((server) => {
@@ -251,6 +276,7 @@ app.get('/api/status', (req, res) => {
       drift,
       drift_reason: drift ? DRIFT_REASONS[drift] : null,
       status: cachedFields || null,
+      metrics: getLiveMetrics(server.id),
       nodes
     };
   });
