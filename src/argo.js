@@ -3,12 +3,12 @@ import { runChecked, runScript, runSudo } from './ssh.js';
 export const DEFAULT_NGINX_PORT = 8080;
 export const DEFAULT_TUNNEL_DOMAIN = '';
 
-const CERT_DIR = '/usr/local/etc/xray/cert';
+const CERT_DIR = '/usr/local/etc/sing-box/cert';
 export const DEFAULT_CERT_FILE = `${CERT_DIR}/cert.pem`;
 export const DEFAULT_KEY_FILE = `${CERT_DIR}/private.key`;
 
 export function isTunnelNode(node) {
-  return Boolean(node?.tunnel) && ['ws', 'xhttp'].includes(node?.network);
+  return Boolean(node?.tunnel) && ['ws'].includes(node?.network);
 }
 
 export function certPathFor(node) {
@@ -21,14 +21,14 @@ export function certPathFor(node) {
 
 export function withSelfSignedPaths(nodes = []) {
   return nodes.map((node) => {
-    if (node.self_signed !== 1 && node.protocol !== 'hysteria2') return node;
+    if (node.self_signed !== 1 && !['hysteria2', 'tuic', 'anytls', 'trojan'].includes(node.protocol)) return node;
     const { certFile, keyFile } = certPathFor(node);
     return { ...node, cert_file: certFile, key_file: keyFile };
   });
 }
 
 export function needsSelfSignedCert(nodes = []) {
-  return nodes.some((node) => node.self_signed === 1 || node.protocol === 'hysteria2');
+  return nodes.some((node) => node.self_signed === 1 || ['hysteria2', 'tuic', 'anytls', 'trojan'].includes(node.protocol));
 }
 
 export function tunnelNodes(nodes = []) {
@@ -93,8 +93,8 @@ export function buildNginxConfig(server, nodes = []) {
 
   return `# Managed by VPS 节点控制台. Do not edit by hand.
 worker_processes auto;
-pid /usr/local/etc/xray/nginx.pid;
-error_log /var/log/xray-nginx-error.log warn;
+pid /usr/local/etc/sing-box/nginx.pid;
+error_log /var/log/singbox-nginx-error.log warn;
 
 events {
   worker_connections 2048;
@@ -162,18 +162,18 @@ elif command -v rc-service >/dev/null 2>&1; then
   rc-update del nginx >/dev/null 2>&1 || true
 fi
 
-mkdir -p /usr/local/etc/xray
+mkdir -p /usr/local/etc/sing-box
 cat > /var/tmp/argo-nginx.b64 <<'EOF'
 ${b64}
 EOF
-base64 -d /var/tmp/argo-nginx.b64 > /usr/local/etc/xray/nginx.conf
+base64 -d /var/tmp/argo-nginx.b64 > /usr/local/etc/sing-box/nginx.conf
 rm -f /var/tmp/argo-nginx.b64
 
-"$NGINX_BIN" -t -c /usr/local/etc/xray/nginx.conf
-if [ -s /usr/local/etc/xray/nginx.pid ] && kill -0 "$(cat /usr/local/etc/xray/nginx.pid)" 2>/dev/null; then
-  "$NGINX_BIN" -s reload -c /usr/local/etc/xray/nginx.conf
+"$NGINX_BIN" -t -c /usr/local/etc/sing-box/nginx.conf
+if [ -s /usr/local/etc/sing-box/nginx.pid ] && kill -0 "$(cat /usr/local/etc/sing-box/nginx.pid)" 2>/dev/null; then
+  "$NGINX_BIN" -s reload -c /usr/local/etc/sing-box/nginx.conf
 else
-  "$NGINX_BIN" -c /usr/local/etc/xray/nginx.conf
+  "$NGINX_BIN" -c /usr/local/etc/sing-box/nginx.conf
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
@@ -184,10 +184,10 @@ After=network.target
 
 [Service]
 Type=forking
-PIDFile=/usr/local/etc/xray/nginx.pid
-ExecStart=$NGINX_BIN -c /usr/local/etc/xray/nginx.conf
-ExecReload=$NGINX_BIN -s reload -c /usr/local/etc/xray/nginx.conf
-ExecStop=$NGINX_BIN -s stop -c /usr/local/etc/xray/nginx.conf
+PIDFile=/usr/local/etc/sing-box/nginx.pid
+ExecStart=$NGINX_BIN -c /usr/local/etc/sing-box/nginx.conf
+ExecReload=$NGINX_BIN -s reload -c /usr/local/etc/sing-box/nginx.conf
+ExecStop=$NGINX_BIN -s stop -c /usr/local/etc/sing-box/nginx.conf
 Restart=on-failure
 RestartSec=3
 
@@ -412,7 +412,7 @@ else
   pgrep -f '/usr/local/bin/cloudflared' >/dev/null 2>&1 && echo "ARGO_ACTIVE=active" || echo "ARGO_ACTIVE=inactive"
   echo "NGINX_ACTIVE=unknown"
 fi
-if [ -f /usr/local/etc/xray/nginx.pid ]; then
+if [ -f /usr/local/etc/sing-box/nginx.pid ]; then
   echo "NGINX_PID_PRESENT=yes"
 else
   echo "NGINX_PID_PRESENT=no"
@@ -453,13 +453,13 @@ rm -f /etc/systemd/system/argo.service /etc/systemd/system/argo-nginx.service
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload >/dev/null 2>&1 || true
 fi
-if [ -s /usr/local/etc/xray/nginx.pid ]; then
-  kill "$(cat /usr/local/etc/xray/nginx.pid)" >/dev/null 2>&1 || true
+if [ -s /usr/local/etc/sing-box/nginx.pid ]; then
+  kill "$(cat /usr/local/etc/sing-box/nginx.pid)" >/dev/null 2>&1 || true
 fi
-rm -f /usr/local/etc/xray/nginx.conf /usr/local/etc/xray/nginx.pid
-rm -f /usr/local/etc/xray/tunnel.json /usr/local/etc/xray/tunnel.yml /usr/local/etc/xray/cloudflared.env
+rm -f /usr/local/etc/sing-box/nginx.conf /usr/local/etc/sing-box/nginx.pid
+rm -f /usr/local/etc/sing-box/tunnel.json /usr/local/etc/sing-box/tunnel.yml /usr/local/etc/sing-box/cloudflared.env
 rm -f /usr/local/bin/cloudflared
-rm -f /var/log/xray-nginx-error.log /var/log/cloudflared.log
+rm -f /var/log/singbox-nginx-error.log /var/log/cloudflared.log
 echo "TUNNEL_UNINSTALLED=ok"
 `;
   const result = await runChecked(runSudo(server, script, { timeout: 60000 }));
