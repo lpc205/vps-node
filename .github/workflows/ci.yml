@@ -21,6 +21,22 @@ jobs:
       - name: Syntax-check backend and browser scripts
         run: find src public -name '*.js' -print0 | xargs -0 -n1 node --check
       - run: npm test
+      - name: Build Docker image and check panel health
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t vps-node-smoke .
+          docker run -d --name vps-node-smoke -p 127.0.0.1:13000:3000 vps-node-smoke
+          trap 'docker rm -f vps-node-smoke >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --show-error --fail http://127.0.0.1:13000/api/health > /tmp/vps-health.json; then
+              cat /tmp/vps-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs vps-node-smoke
+          exit 1
       - name: Validate Sing-box preset schemas against official binary
         run: |
           set -euo pipefail
