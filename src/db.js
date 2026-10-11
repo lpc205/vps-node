@@ -163,6 +163,12 @@ if (!nodeColumns.some((column) => column.name === 'hy2_down')) {
 if (!nodeColumns.some((column) => column.name === 'preferred_address')) {
   db.exec("ALTER TABLE nodes ADD COLUMN preferred_address TEXT NOT NULL DEFAULT ''");
 }
+if (!nodeColumns.some((column) => column.name === 'tls_public_key_sha256')) {
+  db.exec("ALTER TABLE nodes ADD COLUMN tls_public_key_sha256 TEXT NOT NULL DEFAULT ''");
+}
+if (!nodeColumns.some((column) => column.name === 'tls_cert_fingerprint_sha256')) {
+  db.exec("ALTER TABLE nodes ADD COLUMN tls_cert_fingerprint_sha256 TEXT NOT NULL DEFAULT ''");
+}
 
 const serverColumns = db.prepare('PRAGMA table_info(servers)').all();
 if (!serverColumns.some((column) => column.name === 'argo_mode')) {
@@ -547,6 +553,20 @@ export function deleteNode(id) {
     db.exec('ROLLBACK');
     throw error;
   }
+}
+
+export function updateServerTlsFingerprints(serverId, { spki = '', certSha256 = '' } = {}) {
+  const spkiValue = String(spki || '').trim();
+  const fingerprint = String(certSha256 || '').trim();
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(spkiValue) || !/^([A-Fa-f0-9]{2}:){31}[A-Fa-f0-9]{2}$/.test(fingerprint)) {
+    throw new Error('invalid TLS certificate fingerprints');
+  }
+  db.prepare(`
+    UPDATE nodes
+    SET tls_public_key_sha256 = ?, tls_cert_fingerprint_sha256 = ?, updated_at = ?
+    WHERE server_id = ? AND enabled = 1 AND
+      (self_signed = 1 OR protocol IN ('hysteria2', 'tuic', 'anytls', 'trojan'))
+  `).run(spkiValue, fingerprint, now(), serverId);
 }
 
 export function updateNodeRealityKeys(id, { privateKey = '', publicKey = '' } = {}) {
