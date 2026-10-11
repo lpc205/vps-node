@@ -133,7 +133,7 @@ export async function probeServer(server) {
     uptime: fields.UPTIME || '',
     memory: { total: memoryTotal, used: memoryUsed, free: memoryFree },
     disk: { total: diskTotal, used: diskUsed, free: diskFree, usePercent: diskUsePercent },
-    sing-box: {
+    singbox: {
       installed: fields.SINGBOX_BIN !== 'not-installed',
       bin: fields.SINGBOX_BIN,
       version: fields.SINGBOX_VERSION,
@@ -280,10 +280,10 @@ if command -v systemctl >/dev/null 2>&1; then
   CONFIG_PATH="$(systemctl show -p ExecStart --value sing-box 2>/dev/null | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
 fi
 if [ -z "$CONFIG_PATH" ] && command -v ps >/dev/null 2>&1; then
-  CONFIG_PATH="$(ps -ef 2>/dev/null | grep '[x]ray run' | head -1 | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
+  CONFIG_PATH="$(ps -ef 2>/dev/null | grep '[s]ing-box run' | head -1 | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
 fi
 if [ -z "$CONFIG_PATH" ]; then
-  for CANDIDATE in /usr/local/etc/sing-box/config.json /etc/sing-box/config.json /usr/local/etc/v2ray/config.json; do
+  for CANDIDATE in /usr/local/etc/sing-box/config.json /etc/sing-box/config.json /etc/sing-box/config.json; do
     if [ -f "$CANDIDATE" ]; then CONFIG_PATH="$CANDIDATE"; break; fi
   done
 fi
@@ -393,7 +393,7 @@ export function buildNodeStatuses(nodes = [], configData = null, tcpPorts = [], 
   const inbounds = Array.isArray(configData?.inbounds) ? configData.inbounds : [];
   return (nodes || []).map((node) => {
     const port = Number(node.port);
-    const inbound = inbounds.find((item) => Number(item.port) === port && String(item.protocol) === String(node.protocol));
+    const inbound = inbounds.find((item) => Number(item.listen_port) === port && String(item.type) === String(node.protocol));
     return {
       id: node.id,
       name: node.name,
@@ -405,7 +405,7 @@ export function buildNodeStatuses(nodes = [], configData = null, tcpPorts = [], 
       config_tag: inbound?.tag || '',
       listening_tcp: tcpSet.has(port),
       listening_udp: udpSet.has(port),
-      listening: tcpSet.has(port) || udpSet.has(port)
+      listening: ['hysteria2', 'tuic'].includes(node.protocol) ? udpSet.has(port) : tcpSet.has(port)
     };
   });
 }
@@ -421,7 +421,7 @@ export async function singboxStatus(server, nodes = [], options = {}) {
       ok: false,
       checked_at: new Date().toISOString(),
       ssh: { connected: false, error: classifySshError(error) },
-      sing-box: null,
+      singbox: null,
       config: null,
       ports: [],
       nodes: [],
@@ -483,7 +483,7 @@ export async function singboxStatus(server, nodes = [], options = {}) {
       port: Number(server.port || 22),
       username: server.username
     },
-    sing-box: {
+    singbox: {
       installed,
       bin_present: fields.SINGBOX_BIN_PRESENT === 'yes',
       bin: installed ? fields.SINGBOX_BIN : '',
