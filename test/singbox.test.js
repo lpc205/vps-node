@@ -115,6 +115,6 @@ test('Reality key generator outputs URL-safe X25519 key pair', () => {
 
 test('Share link output uses the right proxy protocol', () => {
   const link = nodeLinks(makeNode(), { host: '198.51.100.10' })[0].link;
-  assert.match(link, /^vless:///);
+  assert.equal(link.startsWith('vless://'), true);
   assert.match(link, /pbk=public-key/);
 });
