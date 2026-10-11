@@ -563,6 +563,7 @@ const QUICK_STATUS_SCRIPT = `
 set +e
 if command -v systemctl >/dev/null 2>&1; then
   printf 'SERVICE_ACTIVE=%s\\n' "$(systemctl is-active sing-box 2>/dev/null || echo inactive)"
+  printf 'ARGO_ACTIVE=%s\\n' "$(systemctl is-active argo.service 2>/dev/null || echo inactive)"
 elif command -v rc-service >/dev/null 2>&1; then
   if rc-service sing-box status >/dev/null 2>&1; then echo 'SERVICE_ACTIVE=started'; else echo 'SERVICE_ACTIVE=stopped'; fi
 else
@@ -589,6 +590,7 @@ export async function quickSingboxStatus(server) {
     return {
       ok: true, checked_at: new Date().toISOString(),
       service_active: ['active', 'started'].includes(fields.SERVICE_ACTIVE),
+      argo_active: ['active', 'started'].includes(fields.ARGO_ACTIVE),
       tcp_ports: parsePortList(fields.TCP_PORTS),
       udp_ports: parsePortList(fields.UDP_PORTS),
       ports_available: fields.TCP_PORTS !== undefined && fields.UDP_PORTS !== undefined,
