@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir } from './paths.js';
 import { decryptText, encryptText, newId } from './crypto.js';
-import { canUseReality } from './xray.js';
+import { canUseReality } from './singbox.js';
 import { createSubscriptionToken, hashSubscriptionToken, subscriptionTokenPrefix } from './subscription-token.js';
 
 mkdirSync(dataDir, { recursive: true });
@@ -399,7 +399,7 @@ export function saveNode(input, id = null) {
   const role = input.role === 'outbound' ? 'outbound' : 'inbound';
   let network = String(input.network || 'tcp').trim();
   let security = String(input.security || 'none').trim();
-  if (protocol === 'hysteria2') {
+  if (['hysteria2', 'tuic', 'anytls', 'trojan'].includes(protocol)) {
     network = 'tcp';
     security = 'tls';
   }
@@ -416,10 +416,10 @@ export function saveNode(input, id = null) {
   ];
   const method = protocol === 'shadowsocks' && SS_METHODS.includes(String(input.method || '')) ? String(input.method) : 'aes-256-gcm';
   const ssNetwork = protocol === 'shadowsocks' && ['tcp', 'udp', 'tcp,udp'].includes(String(input.ss_network || '')) ? String(input.ss_network) : 'tcp';
-  const tunnel = (input.tunnel === true || input.tunnel === 1) && ['ws', 'xhttp'].includes(network) && protocol !== 'hysteria2' ? 1 : 0;
+  const tunnel = (input.tunnel === true || input.tunnel === 1) && network === 'ws' && ['vless', 'vmess'].includes(protocol) ? 1 : 0;
   if (tunnel) security = 'none';
 
-  if (!['vmess', 'vless', 'trojan', 'shadowsocks', 'socks', 'hysteria2'].includes(protocol)) {
+  if (!['vmess', 'vless', 'trojan', 'shadowsocks', 'socks', 'hysteria2', 'tuic', 'anytls'].includes(protocol)) {
     const error = new Error('unsupported protocol');
     error.status = 400;
     throw error;
@@ -429,7 +429,7 @@ export function saveNode(input, id = null) {
     error.status = 400;
     throw error;
   }
-  if (!['tcp', 'ws', 'grpc', 'httpupgrade', 'xhttp'].includes(network)) {
+  if (!['tcp', 'ws', 'grpc', 'http'].includes(network)) {
     const error = new Error('unsupported network');
     error.status = 400;
     throw error;
@@ -440,7 +440,7 @@ export function saveNode(input, id = null) {
     throw error;
   }
   if (security === 'reality' && !canUseReality(protocol, network)) {
-    const error = new Error('reality is only supported for vless on tcp, grpc or httpupgrade');
+    const error = new Error('Reality 只支持 VLESS + TCP / gRPC / HTTP');
     error.status = 400;
     throw error;
   }
@@ -480,8 +480,8 @@ export function saveNode(input, id = null) {
     error.status = 400;
     throw error;
   }
-  if (data.tunnel && !['ws', 'xhttp'].includes(network)) {
-    const error = new Error('tunnel is only supported on ws or xhttp transports');
+  if (data.tunnel && !network === 'ws') {
+    const error = new Error('Argo 临时隧道仅支持 WebSocket');
     error.status = 400;
     throw error;
   }
