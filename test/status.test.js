@@ -73,3 +73,24 @@ test('repairActionFor maps drift types to remote actions', () => {
   assert.equal(repairActionFor('offline'), null);
   assert.equal(repairActionFor('running'), null);
 });
+
+test('legacy unsupported node configurations stay visible and are not automatically repaired', () => {
+  const state = {
+    ssh_reachable: 1, config_unsupported: 1,
+    xray_bin_present: 0, config_present: 0, config_match: 0, service_active: 0
+  };
+  assert.equal(deriveServerState(state), 'migration_required');
+  assert.equal(deriveDriftType(state), null);
+});
+
+test('new status column persists migration errors in existing SQLite cache', () => {
+  const id = 'status-migration-unit-test';
+  db.upsertServerStatus(id, {
+    ssh_reachable: 1, config_unsupported: 1,
+    last_error: '旧节点配置需要迁移：不支持 XHTTP',
+    node_status: [], last_checked_at: new Date().toISOString()
+  });
+  const status = db.getServerStatus(id);
+  assert.equal(status.config_unsupported, 1);
+  assert.match(status.last_error, /需要迁移/);
+});
