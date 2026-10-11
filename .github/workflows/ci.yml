@@ -21,27 +21,6 @@ jobs:
       - name: Syntax-check backend and browser scripts
         run: find src public -name '*.js' -print0 | xargs -0 -n1 node --check
       - run: npm test
-      - name: Validate domain-free presets with real sing-box binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=1.14.3
-          mkdir -p /tmp/singbox-verify /tmp/singbox-fixtures
-          curl -fL --retry 3 --connect-timeout 15 --max-time 180 \
-            -o /tmp/singbox-verify/archive.tar.gz \
-            "https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-amd64.tar.gz"
-          tar -xzf /tmp/singbox-verify/archive.tar.gz -C /tmp/singbox-verify
-          binary="/tmp/singbox-verify/sing-box-${version}-linux-amd64/sing-box"
-          "$binary" version
-          openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
-            -keyout /tmp/singbox-fixtures/key.pem \
-            -out /tmp/singbox-fixtures/cert.pem \
-            -subj "/CN=localhost" >/dev/null 2>&1
-          node test/fixtures/generate-singbox-fixtures.mjs /tmp/singbox-fixtures
-          for file in /tmp/singbox-fixtures/*.json; do
-            echo "Validating $(basename "$file")"
-            "$binary" check -c "$file"
-          done
       - name: Validate Sing-box preset schemas against official binary
         run: |
           set -euo pipefail
