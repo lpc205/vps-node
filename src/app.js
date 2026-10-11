@@ -237,13 +237,13 @@ app.get('/api/status/events', (req, res) => {
     'X-Accel-Buffering': 'no'
   });
   res.flushHeaders?.();
-  res.write('retry: 1500\\n\\n');
+  res.write('retry: 1500\n\n');
   const send = (serverId) => {
-    if (!res.destroyed) res.write(`event: status\\ndata: ${JSON.stringify({ server_id: serverId })}\\n\\n`);
+    if (!res.destroyed) res.write(`event: status\ndata: ${JSON.stringify({ server_id: serverId })}\n\n`);
   };
   const unsubscribe = subscribeStatusChanges(send);
   const timer = setInterval(() => {
-    if (!res.destroyed) res.write(': keepalive\\n\\n');
+    if (!res.destroyed) res.write(': keepalive\n\n');
   }, 15000);
   timer.unref?.();
   req.on('close', () => {
