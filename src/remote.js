@@ -9,7 +9,7 @@ import {
   tunnelRequired,
   withSelfSignedPaths
 } from './argo.js';
-import { getServerRecord, updateServerArgoDomain } from './db.js';
+import { getServerRecord, updateServerArgoDomain, updateServerTlsFingerprints } from './db.js';
 
 
 const PROBE_SCRIPT = `
@@ -59,13 +59,13 @@ else
     i386|i686) SINGBOX_ARCH="386" ;;
     *) echo "UNSUPPORTED_ARCH=$ARCH"; exit 1 ;;
   esac
-  if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
+  if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
       DEBIAN_FRONTEND=noninteractive apt-get update -qq
-      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates tar
-    elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates tar
-    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates tar
-    elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates tar
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates tar openssl
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates tar openssl
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates tar openssl
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates tar openssl
     else echo "DEPENDENCIES_MISSING"; exit 1; fi
   fi
   VERSION="$SINGBOX_VERSION"
@@ -533,6 +533,21 @@ fi
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
 
+const TLS_CERT_FINGERPRINT_SCRIPT = `
+set -e
+CERT="/usr/local/etc/sing-box/cert/cert.pem"
+test -s "$CERT"
+echo "TLS_CERT_SHA256=$(openssl x509 -in "$CERT" -noout -fingerprint -sha256 | sed 's/.*=//' | tr '[:lower:]' '[:upper:]')"
+echo "TLS_SPKI_SHA256=$(openssl x509 -in "$CERT" -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64 -A)"
+`;
+
+async function captureTlsFingerprints(server) {
+  const result = await runChecked(runSudo(server, TLS_CERT_FINGERPRINT_SCRIPT, { timeout: 12000 }));
+  const lines = parseStatusOutput(result.stdout);
+  if (!lines.TLS_SPKI_SHA256 || !lines.TLS_CERT_SHA256) throw new Error('TLS 证书指纹读取失败');
+  return { spki: lines.TLS_SPKI_SHA256, certSha256: lines.TLS_CERT_SHA256 };
+}
+
 export async function deployServer(server, nodes, options = {}) {
   const routes = options.routes || [];
   const enabledNodes = nodes.filter((node) => node.enabled !== 0 && node.enabled !== false);
@@ -544,11 +559,13 @@ export async function deployServer(server, nodes, options = {}) {
     return result;
   };
 
-  if (needsSelfSignedCert(enabledNodes)) {
-    const sni = enabledNodes.find((node) => node.self_signed === 1 || node.protocol === 'hysteria2')?.sni || 'localhost';
-    await step('certificate', () => runChecked(runSudo(server, buildCertificateScript(undefined, undefined, sni), { timeout: 60000 })));
-  }
   await step('install-singbox', () => installSingbox(server, options));
+  if (needsSelfSignedCert(enabledNodes)) {
+    const sni = enabledNodes.find((node) => node.self_signed === 1 || ['hysteria2', 'tuic', 'anytls', 'trojan'].includes(node.protocol))?.sni || 'localhost';
+    await step('certificate', () => runChecked(runSudo(server, buildCertificateScript(undefined, undefined, sni), { timeout: 60000 })));
+    const pins = await captureTlsFingerprints(server);
+    updateServerTlsFingerprints(server.id, pins);
+  }
   await step('write-config', () => writeSingboxConfig(server, nodes, routes));
   const restart = await step('restart-singbox', () => restartSingbox(server));
 
