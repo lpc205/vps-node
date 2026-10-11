@@ -69,7 +69,7 @@ else
     else echo "DEPENDENCIES_MISSING"; exit 1; fi
   fi
   RELEASE="$(curl -fsSL --connect-timeout 10 --max-time 30 https://api.github.com/repos/SagerNet/sing-box/releases/latest)"
-  VERSION="$(printf '%s' "$RELEASE" | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')"
+  VERSION="$(printf '%s' "$RELEASE" | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\\1/')"
   test -n "$VERSION" || { echo "VERSION_RESOLUTION_FAILED"; exit 1; }
   URL="https://github.com/SagerNet/sing-box/releases/download/v$VERSION/sing-box-$VERSION-linux-$SINGBOX_ARCH.tar.gz"
   mkdir -p /var/tmp/vps-node-singbox /usr/local/bin /usr/local/etc/sing-box
