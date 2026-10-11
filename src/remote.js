@@ -24,7 +24,7 @@ printf 'DISK=%s\\n' "$(df -h / 2>/dev/null | awk 'NR==2 {print $2 ":" $3 ":" $4 
 if command -v sing-box >/dev/null 2>&1; then
   printf 'SINGBOX_BIN=%s\\n' "$(command -v sing-box)"
   if /usr/local/bin/sing-box version >/dev/null 2>&1; then
-    printf 'SINGBOX_VERSION=%s\\n' "$(/usr/local/bin/sing-box version 2>/dev/null | head -1)"
+    printf 'SINGBOX_VERSION=%s\\n' "$(sing-box version 2>/dev/null | head -1)"
   else
     printf 'SINGBOX_VERSION=broken\\n'
   fi
@@ -134,7 +134,7 @@ export async function probeServer(server) {
     memory: { total: memoryTotal, used: memoryUsed, free: memoryFree },
     disk: { total: diskTotal, used: diskUsed, free: diskFree, usePercent: diskUsePercent },
     singbox: {
-      installed: fields.SINGBOX_BIN !== 'not-installed',
+      installed: Boolean(fields.SINGBOX_BIN && fields.SINGBOX_BIN !== 'not-installed'),
       bin: fields.SINGBOX_BIN,
       version: fields.SINGBOX_VERSION,
       active: fields.SINGBOX_ACTIVE
@@ -143,7 +143,7 @@ export async function probeServer(server) {
 }
 
 export async function installSingbox(server, { force = false } = {}) {
-  const prefix = force ? 'SINGBOX_FORCE=1\n' : '';
+  const prefix = force ? 'SINGBOX_FORCE=1\n' : 'SINGBOX_FORCE=0\n';
   const result = await runChecked(runSudo(server, prefix + INSTALL_SCRIPT, { timeout: 120000 }));
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
@@ -283,7 +283,7 @@ if [ -z "$CONFIG_PATH" ] && command -v ps >/dev/null 2>&1; then
   CONFIG_PATH="$(ps -ef 2>/dev/null | grep '[s]ing-box run' | head -1 | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
 fi
 if [ -z "$CONFIG_PATH" ]; then
-  for CANDIDATE in /usr/local/etc/sing-box/config.json /etc/sing-box/config.json /etc/sing-box/config.json; do
+  for CANDIDATE in /usr/local/etc/sing-box/config.json /etc/sing-box/config.json; do
     if [ -f "$CANDIDATE" ]; then CONFIG_PATH="$CANDIDATE"; break; fi
   done
 fi
@@ -469,7 +469,7 @@ export async function singboxStatus(server, nodes = [], options = {}) {
     }
   }
 
-  const installed = fields.SINGBOX_BIN !== 'not-installed';
+  const installed = Boolean(fields.SINGBOX_BIN && fields.SINGBOX_BIN !== 'not-installed');
   const active = fields.SINGBOX_ACTIVE || 'unknown';
   const running = ['active', 'started'].includes(active);
   const allPorts = [...new Set([...tcpPorts, ...udpPorts])];
@@ -542,9 +542,9 @@ export async function deployServer(server, nodes, options = {}) {
     const sni = enabledNodes.find((node) => node.self_signed === 1 || node.protocol === 'hysteria2')?.sni || 'localhost';
     await step('certificate', () => runChecked(runSudo(server, buildCertificateScript(undefined, undefined, sni), { timeout: 60000 })));
   }
-  await step('install-sing-box', () => installSingbox(server, options));
+  await step('install-singbox', () => installSingbox(server, options));
   await step('write-config', () => writeSingboxConfig(server, nodes, routes));
-  const restart = await step('restart-sing-box', () => restartSingbox(server));
+  const restart = await step('restart-singbox', () => restartSingbox(server));
 
   let tunnel = null;
   if (tunnelRequired(server, enabledNodes)) {
