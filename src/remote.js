@@ -48,6 +48,14 @@ fi
 const INSTALL_SCRIPT = `
 set -e
 SINGBOX_BIN="/usr/local/bin/sing-box"
+if [ -f /etc/systemd/system/sing-box.service ] && ! grep -q 'managed by VPS-Node' /etc/systemd/system/sing-box.service; then
+  echo 'UNMANAGED_SINGBOX_SERVICE_FOUND: refusing to alter an existing service'
+  exit 1
+fi
+if [ -f /etc/init.d/sing-box ] && ! grep -q 'managed by VPS-Node' /etc/init.d/sing-box; then
+  echo 'UNMANAGED_SINGBOX_SERVICE_FOUND: refusing to alter an existing service'
+  exit 1
+fi
 if [ -x "$SINGBOX_BIN" ] && [ "$SINGBOX_FORCE" != "1" ] && "$SINGBOX_BIN" version >/dev/null 2>&1; then
   echo "INSTALL_STATE=already-installed"
 else
@@ -106,6 +114,7 @@ SERVICE
 elif command -v rc-service >/dev/null 2>&1; then
   cat > /etc/init.d/sing-box <<'OPENRC'
 #!/sbin/openrc-run
+# managed by VPS-Node
 name="sing-box"
 command="/usr/local/bin/sing-box"
 command_args="run -c /usr/local/etc/sing-box/config.json"
@@ -117,6 +126,7 @@ OPENRC
   chmod 0755 /etc/init.d/sing-box
   rc-update add sing-box default >/dev/null 2>&1 || true
 fi
+touch /usr/local/etc/sing-box/.vps-node-managed
 echo "SINGBOX_VERSION=$("$SINGBOX_BIN" version 2>/dev/null | head -1)"
 `;
 export async function probeServer(server) {
@@ -216,6 +226,11 @@ echo "SINGBOX_RESTARTED=ok"
 }
 
 const UNINSTALL_SCRIPT = `
+set -e
+if [ ! -f /usr/local/etc/sing-box/.vps-node-managed ]; then
+  echo 'UNMANAGED_SINGBOX_INSTALLATION: refusing removal'
+  exit 1
+fi
 set +e
 
 # Remove only the Singbox installation managed by this panel.
@@ -238,6 +253,7 @@ rm -f /usr/local/etc/sing-box/config.json
 rmdir /etc/sing-box >/dev/null 2>&1 || true
 rmdir /usr/local/etc/sing-box >/dev/null 2>&1 || true
 rm -f /var/log/sing-box.log
+rm -f /usr/local/etc/sing-box/.vps-node-managed
 echo "SINGBOX_UNINSTALLED=ok"
 `;
 
