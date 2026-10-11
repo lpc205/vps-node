@@ -148,8 +148,8 @@ export async function probeServer(server) {
 
 export async function installSingbox(server, { force = false } = {}) {
   const version = String(process.env.PANEL_SINGBOX_VERSION || '1.14.3');
-  if (!/^\\d+\\.\\d+\\.\\d+$/.test(version)) throw new Error('invalid PANEL_SINGBOX_VERSION');
-  const prefix = `SINGBOX_FORCE=${force ? '1' : '0'}\\nSINGBOX_VERSION=${version}\\n`;
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('invalid PANEL_SINGBOX_VERSION');
+  const prefix = `SINGBOX_FORCE=${force ? '1' : '0'}\nSINGBOX_VERSION=${version}\n`;
   const result = await runChecked(runSudo(server, prefix + INSTALL_SCRIPT, { timeout: 120000 }));
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
