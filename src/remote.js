@@ -632,3 +632,12 @@ export async function quickSingboxStatus(server) {
     return { ok: false, checked_at: new Date().toISOString(), error: classifySshError(error), elapsed_ms: Date.now() - startedAt };
   }
 }
+
+// Exposes static templates for non-executing shell syntax validation in CI.
+export const shellTemplatesForTests = Object.freeze({
+  install: INSTALL_SCRIPT,
+  uninstall: UNINSTALL_SCRIPT,
+  fullStatus: STATUS_SCRIPT,
+  quickStatus: QUICK_STATUS_SCRIPT,
+  fingerprint: TLS_CERT_FINGERPRINT_SCRIPT
+});
