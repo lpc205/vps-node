@@ -76,8 +76,8 @@ else
   tar -xzf /var/tmp/vps-node-singbox/archive.tar.gz -C /var/tmp/vps-node-singbox
   EXTRACTED="$(find /var/tmp/vps-node-singbox -type f -name sing-box | head -1)"
   test -n "$EXTRACTED" && "$EXTRACTED" version >/dev/null 2>&1 || { echo "SINGBOX_BINARY_CHECK=failed"; exit 1; }
-  install -m 0755 "$EXTRACTED" "/usr/local/bin/.sing-box-${VERSION}.new"
-  mv -f "/usr/local/bin/.sing-box-${VERSION}.new" "$SINGBOX_BIN"
+  install -m 0755 "$EXTRACTED" "/usr/local/bin/.sing-box-$VERSION.new"
+  mv -f "/usr/local/bin/.sing-box-$VERSION.new" "$SINGBOX_BIN"
   rm -rf /var/tmp/vps-node-singbox
   echo "INSTALL_STATE=installed"
 fi
