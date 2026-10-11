@@ -1,5 +1,5 @@
 import { runChecked, runScript, runSudo } from './ssh.js';
-import { buildXrayConfig } from './xray.js';
+import { buildSingboxConfig } from './singbox.js';
 import { createHash } from 'node:crypto';
 import {
   buildCertificateScript,
@@ -21,154 +21,100 @@ printf 'ARCH=%s\\n' "$(uname -m)"
 printf 'UPTIME=%s\\n' "$(uptime 2>/dev/null)"
 printf 'MEMORY=%s\\n' "$(free -m 2>/dev/null | awk 'NR==2 {print $2 ":" $3 ":" $4}')"
 printf 'DISK=%s\\n' "$(df -h / 2>/dev/null | awk 'NR==2 {print $2 ":" $3 ":" $4 ":" $5}')"
-if command -v xray >/dev/null 2>&1; then
-  printf 'XRAY_BIN=%s\\n' "$(command -v xray)"
-  if /usr/local/bin/xray version >/dev/null 2>&1; then
-    printf 'XRAY_VERSION=%s\\n' "$(/usr/local/bin/xray version 2>/dev/null | head -1)"
+if command -v sing-box >/dev/null 2>&1; then
+  printf 'SINGBOX_BIN=%s\\n' "$(command -v sing-box)"
+  if /usr/local/bin/sing-box version >/dev/null 2>&1; then
+    printf 'SINGBOX_VERSION=%s\\n' "$(sing-box version 2>/dev/null | head -1)"
   else
-    printf 'XRAY_VERSION=broken\\n'
+    printf 'SINGBOX_VERSION=broken\\n'
   fi
 else
-  printf 'XRAY_BIN=not-installed\\n'
-  printf 'XRAY_VERSION=\\n'
+  printf 'SINGBOX_BIN=not-installed\\n'
+  printf 'SINGBOX_VERSION=\\n'
 fi
 if command -v systemctl >/dev/null 2>&1; then
-  printf 'XRAY_ACTIVE=%s\\n' "$(systemctl is-active xray 2>/dev/null || echo unknown)"
+  printf 'SINGBOX_ACTIVE=%s\\n' "$(systemctl is-active sing-box 2>/dev/null || echo unknown)"
 elif command -v rc-service >/dev/null 2>&1; then
-  if rc-service xray status >/dev/null 2>&1; then
-    printf 'XRAY_ACTIVE=started\\n'
+  if rc-service sing-box status >/dev/null 2>&1; then
+    printf 'SINGBOX_ACTIVE=started\\n'
   else
-    printf 'XRAY_ACTIVE=stopped\\n'
+    printf 'SINGBOX_ACTIVE=stopped\\n'
   fi
 else
-  printf 'XRAY_ACTIVE=unknown\\n'
+  printf 'SINGBOX_ACTIVE=unknown\\n'
 fi
 `;
 
 const INSTALL_SCRIPT = `
 set -e
-
-XRAY_FORCE="\${XRAY_FORCE:-0}"
-XRAY_BIN="/usr/local/bin/xray"
-ALREADY_INSTALLED=0
-
-if [ -x "$XRAY_BIN" ]; then
-  if [ "$XRAY_FORCE" = "1" ]; then
-    echo "INSTALL_STATE=force-reinstall"
-    rm -f "$XRAY_BIN"
-  elif "$XRAY_BIN" version >/dev/null 2>&1; then
-    echo "INSTALL_STATE=already-installed"
-    "$XRAY_BIN" version 2>/dev/null | head -1
-    ALREADY_INSTALLED=1
-  else
-    echo "INSTALL_STATE=broken-binary"
-    rm -f "$XRAY_BIN"
-  fi
-fi
-
-if [ "$ALREADY_INSTALLED" != "1" ]; then
+SINGBOX_BIN="/usr/local/bin/sing-box"
+if [ -x "$SINGBOX_BIN" ] && [ "$SINGBOX_FORCE" != "1" ] && "$SINGBOX_BIN" version >/dev/null 2>&1; then
+  echo "INSTALL_STATE=already-installed"
+else
   ARCH="$(uname -m)"
   case "$ARCH" in
-    x86_64|amd64) XRAY_ARCH="64" ;;
-    aarch64|arm64) XRAY_ARCH="arm64-v8a" ;;
-    armv7l|armhf) XRAY_ARCH="arm32-v7a" ;;
-    i386|i686) XRAY_ARCH="32" ;;
+    x86_64|amd64) SINGBOX_ARCH="amd64" ;;
+    aarch64|arm64) SINGBOX_ARCH="arm64" ;;
+    armv7l|armhf) SINGBOX_ARCH="armv7" ;;
+    i386|i686) SINGBOX_ARCH="386" ;;
     *) echo "UNSUPPORTED_ARCH=$ARCH"; exit 1 ;;
   esac
-
-  echo "INSTALL_STATE=installing arch=$XRAY_ARCH"
-
-  if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -qq
-    apt-get install -y -qq curl unzip
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y -q curl unzip
-  elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache curl unzip
-  else
-    echo "NO_PACKAGE_MANAGER"
-    exit 1
+  if ! command -v curl >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      DEBIAN_FRONTEND=noninteractive apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates tar
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates tar
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates tar
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates tar
+    else echo "DEPENDENCIES_MISSING"; exit 1; fi
   fi
-
-  mkdir -p /var/tmp/xray-pkg /usr/local/bin /usr/local/etc/xray
-
-  attempt=0
-  while [ "$attempt" -lt 3 ]; do
-    attempt=$((attempt + 1))
-    rm -rf /var/tmp/xray-pkg
-    mkdir -p /var/tmp/xray-pkg
-    if curl -fsSL -o /var/tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-\${XRAY_ARCH}.zip" \
-      && unzip -qo /var/tmp/xray.zip -d /var/tmp/xray-pkg \
-      && [ -f /var/tmp/xray-pkg/xray ] \
-      && /var/tmp/xray-pkg/xray version >/dev/null 2>&1; then
-      break
-    fi
-    echo "XRAY_DOWNLOAD_ATTEMPT=$attempt failed"
-    rm -f /var/tmp/xray.zip
-  done
-
-  if [ ! -f /var/tmp/xray-pkg/xray ] || ! /var/tmp/xray-pkg/xray version >/dev/null 2>&1; then
-    echo "XRAY_BINARY_CHECK=failed"
-    exit 1
-  fi
-
-  install -m 0755 /var/tmp/xray-pkg/xray "$XRAY_BIN"
-  rm -rf /var/tmp/xray-pkg /var/tmp/xray.zip
-  echo "XRAY_VERSION=$("$XRAY_BIN" version 2>/dev/null | head -1)"
+  RELEASE="$(curl -fsSL --connect-timeout 10 --max-time 30 https://api.github.com/repos/SagerNet/sing-box/releases/latest)"
+  VERSION="$(printf '%s' "$RELEASE" | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\\1/')"
+  test -n "$VERSION" || { echo "VERSION_RESOLUTION_FAILED"; exit 1; }
+  URL="https://github.com/SagerNet/sing-box/releases/download/v$VERSION/sing-box-$VERSION-linux-$SINGBOX_ARCH.tar.gz"
+  mkdir -p /var/tmp/vps-node-singbox /usr/local/bin /usr/local/etc/sing-box
+  curl -fL --retry 2 --connect-timeout 10 --max-time 120 -o /var/tmp/vps-node-singbox/archive.tar.gz "$URL"
+  tar -xzf /var/tmp/vps-node-singbox/archive.tar.gz -C /var/tmp/vps-node-singbox
+  EXTRACTED="$(find /var/tmp/vps-node-singbox -type f -name sing-box | head -1)"
+  test -n "$EXTRACTED" && "$EXTRACTED" version >/dev/null 2>&1 || { echo "SINGBOX_BINARY_CHECK=failed"; exit 1; }
+  install -m 0755 "$EXTRACTED" "$SINGBOX_BIN"
+  rm -rf /var/tmp/vps-node-singbox
+  echo "INSTALL_STATE=installed"
 fi
-
+mkdir -p /usr/local/etc/sing-box
 if command -v systemctl >/dev/null 2>&1; then
-  cat > /etc/systemd/system/xray.service <<'SERVICE'
+  cat > /etc/systemd/system/sing-box.service <<'SERVICE'
 [Unit]
-Description=Xray Service
-After=network.target nss-lookup.target
-
+Description=Sing-box Proxy Service (managed by VPS-Node)
+After=network-online.target
+Wants=network-online.target
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
+ExecStart=/usr/local/bin/sing-box run -c /usr/local/etc/sing-box/config.json
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=1048576
-
 [Install]
 WantedBy=multi-user.target
 SERVICE
-
   systemctl daemon-reload
-  systemctl enable xray >/dev/null 2>&1 || true
-  if [ -f /usr/local/etc/xray/config.json ]; then
-    systemctl restart xray
-    echo "INSTALL_STATE=started"
-  else
-    echo "INSTALL_STATE=installed-waiting-config"
-  fi
+  systemctl enable sing-box >/dev/null 2>&1 || true
 elif command -v rc-service >/dev/null 2>&1; then
-  cat > /etc/init.d/xray <<'OPENRC'
+  cat > /etc/init.d/sing-box <<'OPENRC'
 #!/sbin/openrc-run
-
-name="xray"
-description="Xray service"
-
-command="/usr/local/bin/xray"
-command_args="run -config /usr/local/etc/xray/config.json"
+name="sing-box"
+command="/usr/local/bin/sing-box"
+command_args="run -c /usr/local/etc/sing-box/config.json"
 command_background="yes"
-pidfile="/run/\${RC_SVCNAME}.pid"
-output_log="/var/log/xray.log"
-error_log="/var/log/xray.log"
+pidfile="/run/sing-box.pid"
+output_log="/var/log/sing-box.log"
+error_log="/var/log/sing-box.log"
 OPENRC
-  chmod 0755 /etc/init.d/xray
-  rc-update add xray default >/dev/null 2>&1 || true
-  if [ -f /usr/local/etc/xray/config.json ]; then
-    rc-service xray restart
-    echo "INSTALL_STATE=started"
-  else
-    echo "INSTALL_STATE=installed-waiting-config"
-  fi
-else
-  echo "INSTALL_STATE=installed"
+  chmod 0755 /etc/init.d/sing-box
+  rc-update add sing-box default >/dev/null 2>&1 || true
 fi
+echo "SINGBOX_VERSION=$("$SINGBOX_BIN" version 2>/dev/null | head -1)"
 `;
-
 export async function probeServer(server) {
   const result = await runChecked(runScript(server, PROBE_SCRIPT));
   const fields = {};
@@ -187,64 +133,77 @@ export async function probeServer(server) {
     uptime: fields.UPTIME || '',
     memory: { total: memoryTotal, used: memoryUsed, free: memoryFree },
     disk: { total: diskTotal, used: diskUsed, free: diskFree, usePercent: diskUsePercent },
-    xray: {
-      installed: fields.XRAY_BIN !== 'not-installed',
-      bin: fields.XRAY_BIN,
-      version: fields.XRAY_VERSION,
-      active: fields.XRAY_ACTIVE
+    singbox: {
+      installed: Boolean(fields.SINGBOX_BIN && fields.SINGBOX_BIN !== 'not-installed'),
+      bin: fields.SINGBOX_BIN,
+      version: fields.SINGBOX_VERSION,
+      active: fields.SINGBOX_ACTIVE
     }
   };
 }
 
-export async function installXray(server, { force = false } = {}) {
-  const prefix = force ? 'XRAY_FORCE=1\n' : '';
+export async function installSingbox(server, { force = false } = {}) {
+  const prefix = force ? 'SINGBOX_FORCE=1\n' : 'SINGBOX_FORCE=0\n';
   const result = await runChecked(runSudo(server, prefix + INSTALL_SCRIPT, { timeout: 120000 }));
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
 
-export async function writeXrayConfig(server, nodes, routes = []) {
-  const config = buildXrayConfig(withSelfSignedPaths(nodes), routes);
+export async function writeSingboxConfig(server, nodes, routes = []) {
+  const config = buildSingboxConfig(withSelfSignedPaths(nodes), routes);
   const json = JSON.stringify(config, null, 2);
   const b64 = Buffer.from(json).toString('base64');
   const script = `
 set -e
-mkdir -p /usr/local/etc/xray
-cat > /var/tmp/xray-config.b64 <<'EOF'
-${b64}
-EOF
-base64 -d /var/tmp/xray-config.b64 > /usr/local/etc/xray/config.json
-chmod 600 /usr/local/etc/xray/config.json
-rm -f /var/tmp/xray-config.b64
+mkdir -p /usr/local/etc/sing-box
+umask 077
+STAGED="$(mktemp /usr/local/etc/sing-box/.config.XXXXXX)"
+printf '%s' '${b64}' | base64 -d > "$STAGED"
+if ! /usr/local/bin/sing-box check -c "$STAGED"; then
+  rm -f "$STAGED"
+  echo "CONFIG_CHECK_FAILED"
+  exit 1
+fi
+if [ -f /usr/local/etc/sing-box/config.json ]; then
+  cp -p /usr/local/etc/sing-box/config.json /usr/local/etc/sing-box/config.json.bak
+fi
+mv "$STAGED" /usr/local/etc/sing-box/config.json
+chmod 600 /usr/local/etc/sing-box/config.json
 echo "CONFIG_WRITTEN=ok"
 `;
-  const result = await runChecked(runSudo(server, script, { timeout: 60000 }));
+  const result = await runChecked(runSudo(server, script, { timeout: 30000 }));
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
-
-export async function restartXray(server) {
+export async function restartSingbox(server) {
   const script = `
 set -e
-XRAY_BIN="/usr/local/bin/xray"
+SINGBOX_BIN="/usr/local/bin/sing-box"
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl enable xray >/dev/null 2>&1 || true
-  systemctl restart xray
-  systemctl is-active xray
+  systemctl enable sing-box >/dev/null 2>&1 || true
+  if ! systemctl restart sing-box || ! systemctl is-active --quiet sing-box; then
+    if [ -f /usr/local/etc/sing-box/config.json.bak ]; then
+      cp -p /usr/local/etc/sing-box/config.json.bak /usr/local/etc/sing-box/config.json
+      systemctl restart sing-box || true
+    fi
+    echo "SINGBOX_RESTART_FAILED_ROLLED_BACK"
+    exit 1
+  fi
+  systemctl is-active sing-box
 elif command -v rc-service >/dev/null 2>&1; then
-  pkill -f 'xray run -config' 2>/dev/null || true
-  rc-update add xray default >/dev/null 2>&1 || true
-  rc-service xray restart
-  rc-service xray status || true
+  pkill -f 'sing-box run -c' 2>/dev/null || true
+  rc-update add sing-box default >/dev/null 2>&1 || true
+  rc-service sing-box restart
+  rc-service sing-box status || true
 else
-  pkill -f 'xray run -config' 2>/dev/null || true
+  pkill -f 'sing-box run -c' 2>/dev/null || true
   sleep 1
   if command -v setsid >/dev/null 2>&1; then
-    setsid "$XRAY_BIN" run -config /usr/local/etc/xray/config.json </dev/null >/var/log/xray.log 2>&1 &
+    setsid "$SINGBOX_BIN" run -c /usr/local/etc/sing-box/config.json </dev/null >/var/log/sing-box.log 2>&1 &
   else
-    nohup "$XRAY_BIN" run -config /usr/local/etc/xray/config.json </dev/null >/var/log/xray.log 2>&1 &
+    nohup "$SINGBOX_BIN" run -c /usr/local/etc/sing-box/config.json </dev/null >/var/log/sing-box.log 2>&1 &
   fi
   sleep 1
 fi
-echo "XRAY_RESTARTED=ok"
+echo "SINGBOX_RESTARTED=ok"
 `;
   const result = await runChecked(runSudo(server, script, { timeout: 60000 }));
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
@@ -253,82 +212,82 @@ echo "XRAY_RESTARTED=ok"
 const UNINSTALL_SCRIPT = `
 set +e
 
-# Remove only the Xray installation managed by this panel.
+# Remove only the Singbox installation managed by this panel.
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl stop xray >/dev/null 2>&1 || true
-  systemctl disable xray >/dev/null 2>&1 || true
-  rm -f /etc/systemd/system/xray.service
+  systemctl stop sing-box >/dev/null 2>&1 || true
+  systemctl disable sing-box >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/sing-box.service
   systemctl daemon-reload >/dev/null 2>&1 || true
 elif command -v rc-service >/dev/null 2>&1; then
-  rc-service xray stop >/dev/null 2>&1 || true
-  rc-update del xray default >/dev/null 2>&1 || true
-  rm -f /etc/init.d/xray
+  rc-service sing-box stop >/dev/null 2>&1 || true
+  rc-update del sing-box default >/dev/null 2>&1 || true
+  rm -f /etc/init.d/sing-box
 elif command -v pkill >/dev/null 2>&1; then
-  pkill -f 'xray run -config' >/dev/null 2>&1 || true
+  pkill -f 'sing-box run -c' >/dev/null 2>&1 || true
 fi
 
-rm -f /usr/local/bin/xray
-rm -f /etc/xray/config.json
-rm -f /usr/local/etc/xray/config.json
-rmdir /etc/xray >/dev/null 2>&1 || true
-rmdir /usr/local/etc/xray >/dev/null 2>&1 || true
-rm -f /var/log/xray.log
-echo "XRAY_UNINSTALLED=ok"
+rm -f /usr/local/bin/sing-box
+rm -f /etc/sing-box/config.json
+rm -f /usr/local/etc/sing-box/config.json
+rmdir /etc/sing-box >/dev/null 2>&1 || true
+rmdir /usr/local/etc/sing-box >/dev/null 2>&1 || true
+rm -f /var/log/sing-box.log
+echo "SINGBOX_UNINSTALLED=ok"
 `;
 
-export async function uninstallXray(server) {
+export async function uninstallSingbox(server) {
   const result = await runChecked(runSudo(server, UNINSTALL_SCRIPT, { timeout: 60000 }));
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
 
 const STATUS_SCRIPT = `
 set +e
-if command -v xray >/dev/null 2>&1 || [ -x /usr/local/bin/xray ]; then
-  XRAY_BIN="$(command -v xray 2>/dev/null || echo /usr/local/bin/xray)"
-  echo "XRAY_BIN=$XRAY_BIN"
-  if "$XRAY_BIN" version >/dev/null 2>&1; then
-    echo "XRAY_VERSION=$("$XRAY_BIN" version 2>/dev/null | head -1)"
+if command -v sing-box >/dev/null 2>&1 || [ -x /usr/local/bin/sing-box ]; then
+  SINGBOX_BIN="$(command -v sing-box 2>/dev/null || echo /usr/local/bin/sing-box)"
+  echo "SINGBOX_BIN=$SINGBOX_BIN"
+  if "$SINGBOX_BIN" version >/dev/null 2>&1; then
+    echo "SINGBOX_VERSION=$("$SINGBOX_BIN" version 2>/dev/null | head -1)"
   else
-    echo "XRAY_VERSION=broken"
+    echo "SINGBOX_VERSION=broken"
   fi
 else
-  echo "XRAY_BIN=not-installed"
+  echo "SINGBOX_BIN=not-installed"
 fi
-if [ -x /usr/local/bin/xray ]; then
-  echo "XRAY_BIN_PRESENT=yes"
+if [ -x /usr/local/bin/sing-box ]; then
+  echo "SINGBOX_BIN_PRESENT=yes"
 else
-  echo "XRAY_BIN_PRESENT=no"
+  echo "SINGBOX_BIN_PRESENT=no"
 fi
 if command -v systemctl >/dev/null 2>&1; then
-  echo "XRAY_ACTIVE=$(systemctl is-active xray 2>/dev/null || echo inactive)"
-  echo "XRAY_ENABLED=$(systemctl is-enabled xray 2>/dev/null || echo disabled)"
+  echo "SINGBOX_ACTIVE=$(systemctl is-active sing-box 2>/dev/null || echo inactive)"
+  echo "SINGBOX_ENABLED=$(systemctl is-enabled sing-box 2>/dev/null || echo disabled)"
 elif command -v rc-service >/dev/null 2>&1; then
-  if rc-service xray status >/dev/null 2>&1; then
-    echo "XRAY_ACTIVE=started"
+  if rc-service sing-box status >/dev/null 2>&1; then
+    echo "SINGBOX_ACTIVE=started"
   else
-    echo "XRAY_ACTIVE=stopped"
+    echo "SINGBOX_ACTIVE=stopped"
   fi
-  if rc-update show default 2>/dev/null | grep -q xray; then
-    echo "XRAY_ENABLED=enabled"
+  if rc-update show default 2>/dev/null | grep -q sing-box; then
+    echo "SINGBOX_ENABLED=enabled"
   else
-    echo "XRAY_ENABLED=disabled"
+    echo "SINGBOX_ENABLED=disabled"
   fi
 else
-  echo "XRAY_ACTIVE=unknown"
+  echo "SINGBOX_ACTIVE=unknown"
 fi
 CONFIG_PATH=""
 if command -v systemctl >/dev/null 2>&1; then
-  CONFIG_PATH="$(systemctl show -p ExecStart --value xray 2>/dev/null | sed -n 's/.*-config[ =]*\\([^ ]*\\).*/\\1/p')"
+  CONFIG_PATH="$(systemctl show -p ExecStart --value sing-box 2>/dev/null | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
 fi
 if [ -z "$CONFIG_PATH" ] && command -v ps >/dev/null 2>&1; then
-  CONFIG_PATH="$(ps -ef 2>/dev/null | grep '[x]ray run' | head -1 | sed -n 's/.*-config[ =]*\\([^ ]*\\).*/\\1/p')"
+  CONFIG_PATH="$(ps -ef 2>/dev/null | grep '[s]ing-box run' | head -1 | sed -n 's/.*-c[ =]*\\([^ ]*\\).*/\\1/p')"
 fi
 if [ -z "$CONFIG_PATH" ]; then
-  for CANDIDATE in /usr/local/etc/xray/config.json /etc/xray/config.json /usr/local/etc/v2ray/config.json; do
+  for CANDIDATE in /usr/local/etc/sing-box/config.json /etc/sing-box/config.json; do
     if [ -f "$CANDIDATE" ]; then CONFIG_PATH="$CANDIDATE"; break; fi
   done
 fi
-if [ -z "$CONFIG_PATH" ]; then CONFIG_PATH="/usr/local/etc/xray/config.json"; fi
+if [ -z "$CONFIG_PATH" ]; then CONFIG_PATH="/usr/local/etc/sing-box/config.json"; fi
 echo "CONFIG_PATH=$CONFIG_PATH"
 if [ -f "$CONFIG_PATH" ]; then
   echo "CONFIG_EXISTS=yes"
@@ -434,7 +393,7 @@ export function buildNodeStatuses(nodes = [], configData = null, tcpPorts = [], 
   const inbounds = Array.isArray(configData?.inbounds) ? configData.inbounds : [];
   return (nodes || []).map((node) => {
     const port = Number(node.port);
-    const inbound = inbounds.find((item) => Number(item.port) === port && String(item.protocol) === String(node.protocol));
+    const inbound = inbounds.find((item) => Number(item.listen_port) === port && String(item.type) === String(node.protocol));
     return {
       id: node.id,
       name: node.name,
@@ -446,12 +405,12 @@ export function buildNodeStatuses(nodes = [], configData = null, tcpPorts = [], 
       config_tag: inbound?.tag || '',
       listening_tcp: tcpSet.has(port),
       listening_udp: udpSet.has(port),
-      listening: tcpSet.has(port) || udpSet.has(port)
+      listening: ['hysteria2', 'tuic'].includes(node.protocol) ? udpSet.has(port) : tcpSet.has(port)
     };
   });
 }
 
-export async function xrayStatus(server, nodes = [], options = {}) {
+export async function singboxStatus(server, nodes = [], options = {}) {
   const startedAt = Date.now();
   let result;
   try {
@@ -462,7 +421,7 @@ export async function xrayStatus(server, nodes = [], options = {}) {
       ok: false,
       checked_at: new Date().toISOString(),
       ssh: { connected: false, error: classifySshError(error) },
-      xray: null,
+      singbox: null,
       config: null,
       ports: [],
       nodes: [],
@@ -489,7 +448,7 @@ export async function xrayStatus(server, nodes = [], options = {}) {
   let configB64 = fields.CONFIG_B64 || '';
   if (fields.CONFIG_EXISTS === 'yes' && !configB64 && canUseSudo(server)) {
     try {
-      const configPath = fields.CONFIG_PATH || '/usr/local/etc/xray/config.json';
+      const configPath = fields.CONFIG_PATH || '/usr/local/etc/sing-box/config.json';
       const sudoResult = await runSudo(server, READ_CONFIG_AS_ROOT_SCRIPT(configPath), { timeout: 15000 });
       const sudoFields = parseStatusOutput(sudoResult.stdout);
       if (sudoFields.CONFIG_B64) configB64 = sudoFields.CONFIG_B64;
@@ -510,8 +469,8 @@ export async function xrayStatus(server, nodes = [], options = {}) {
     }
   }
 
-  const installed = fields.XRAY_BIN !== 'not-installed';
-  const active = fields.XRAY_ACTIVE || 'unknown';
+  const installed = Boolean(fields.SINGBOX_BIN && fields.SINGBOX_BIN !== 'not-installed');
+  const active = fields.SINGBOX_ACTIVE || 'unknown';
   const running = ['active', 'started'].includes(active);
   const allPorts = [...new Set([...tcpPorts, ...udpPorts])];
 
@@ -524,20 +483,20 @@ export async function xrayStatus(server, nodes = [], options = {}) {
       port: Number(server.port || 22),
       username: server.username
     },
-    xray: {
+    singbox: {
       installed,
-      bin_present: fields.XRAY_BIN_PRESENT === 'yes',
-      bin: installed ? fields.XRAY_BIN : '',
-      version: fields.XRAY_VERSION || '',
+      bin_present: fields.SINGBOX_BIN_PRESENT === 'yes',
+      bin: installed ? fields.SINGBOX_BIN : '',
+      version: fields.SINGBOX_VERSION || '',
       active,
-      enabled: fields.XRAY_ENABLED || 'unknown',
+      enabled: fields.SINGBOX_ENABLED || 'unknown',
       running
     },
     config: {
       exists: fields.CONFIG_EXISTS === 'yes',
       readable: Boolean(configB64),
       valid: configValid,
-      path: fields.CONFIG_PATH || '/usr/local/etc/xray/config.json'
+      path: fields.CONFIG_PATH || '/usr/local/etc/sing-box/config.json'
       ,
       sha256: configSha256
     },
@@ -553,13 +512,13 @@ export async function xrayStatus(server, nodes = [], options = {}) {
   };
 }
 
-export async function xrayLogs(server, lines = 100) {
+export async function singboxLogs(server, lines = 100) {
   const count = Number.isInteger(lines) ? Math.max(1, Math.min(lines, 500)) : 100;
   const script = `
 if command -v journalctl >/dev/null 2>&1; then
-  journalctl -u xray -n ${count} --no-pager 2>/dev/null || true
-elif [ -f /var/log/xray.log ]; then
-  tail -n ${count} /var/log/xray.log
+  journalctl -u sing-box -n ${count} --no-pager 2>/dev/null || true
+elif [ -f /var/log/sing-box.log ]; then
+  tail -n ${count} /var/log/sing-box.log
 else
   echo "NO_LOGS_AVAILABLE"
 fi
@@ -583,9 +542,9 @@ export async function deployServer(server, nodes, options = {}) {
     const sni = enabledNodes.find((node) => node.self_signed === 1 || node.protocol === 'hysteria2')?.sni || 'localhost';
     await step('certificate', () => runChecked(runSudo(server, buildCertificateScript(undefined, undefined, sni), { timeout: 60000 })));
   }
-  await step('install-xray', () => installXray(server, options));
-  await step('write-config', () => writeXrayConfig(server, nodes, routes));
-  const restart = await step('restart-xray', () => restartXray(server));
+  await step('install-singbox', () => installSingbox(server, options));
+  await step('write-config', () => writeSingboxConfig(server, nodes, routes));
+  const restart = await step('restart-singbox', () => restartSingbox(server));
 
   let tunnel = null;
   if (tunnelRequired(server, enabledNodes)) {
@@ -596,6 +555,53 @@ export async function deployServer(server, nodes, options = {}) {
     }
   }
 
-  const status = await step('status', () => xrayStatus(server, nodes));
+  const status = await step('status', () => singboxStatus(server, nodes));
   return { ok: true, restart, tunnel, status };
+}
+
+const QUICK_STATUS_SCRIPT = `
+set +e
+if command -v systemctl >/dev/null 2>&1; then
+  printf 'SERVICE_ACTIVE=%s\\n' "$(systemctl is-active sing-box 2>/dev/null || echo inactive)"
+  printf 'ARGO_ACTIVE=%s\\n' "$(systemctl is-active argo.service 2>/dev/null || echo inactive)"
+elif command -v rc-service >/dev/null 2>&1; then
+  if rc-service sing-box status >/dev/null 2>&1; then echo 'SERVICE_ACTIVE=started'; else echo 'SERVICE_ACTIVE=stopped'; fi
+else
+  if pgrep -f '^/usr/local/bin/sing-box run' >/dev/null 2>&1; then echo 'SERVICE_ACTIVE=started'; else echo 'SERVICE_ACTIVE=stopped'; fi
+fi
+if command -v ss >/dev/null 2>&1; then
+  printf 'TCP_PORTS=%s\\n' "$(ss -lntH 2>/dev/null | awk '{n=split($4,a,":");print a[n]}' | sort -un | tr '\\n' ',')"
+  printf 'UDP_PORTS=%s\\n' "$(ss -lnuH 2>/dev/null | awk '{n=split($4,a,":");print a[n]}' | sort -un | tr '\\n' ',')"
+fi
+awk '/^cpu / {idle=$5+$6; total=0; for(i=2;i<=NF;i++) total+=$i; printf "CPU_TOTAL=%.0f\\nCPU_IDLE=%.0f\\n",total,idle}' /proc/stat 2>/dev/null
+awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {printf "MEM_TOTAL_KB=%.0f\\nMEM_AVAILABLE_KB=%.0f\\n",t,a}' /proc/meminfo 2>/dev/null
+awk 'NR==1 {print "LOAD_1M="$1}' /proc/loadavg 2>/dev/null
+awk 'NR>2 {gsub(/:/,"",$1); if($1!="lo"){rx+=$2;tx+=$10}} END {printf "NET_RX_BYTES=%.0f\\nNET_TX_BYTES=%.0f\\n",rx,tx}' /proc/net/dev 2>/dev/null
+echo 'QUICK_STATUS_DONE=yes'
+`;
+
+export async function quickSingboxStatus(server) {
+  const startedAt = Date.now();
+  try {
+    const result = await runScript(server, QUICK_STATUS_SCRIPT, { reuse: true, timeout: 7500 });
+    if (result.code !== 0) throw new Error(result.stderr || 'status probe failed');
+    const fields = parseStatusOutput(result.stdout);
+    if (fields.QUICK_STATUS_DONE !== 'yes') throw new Error('incomplete status probe');
+    return {
+      ok: true, checked_at: new Date().toISOString(),
+      service_active: ['active', 'started'].includes(fields.SERVICE_ACTIVE),
+      argo_active: ['active', 'started'].includes(fields.ARGO_ACTIVE),
+      tcp_ports: parsePortList(fields.TCP_PORTS),
+      udp_ports: parsePortList(fields.UDP_PORTS),
+      ports_available: fields.TCP_PORTS !== undefined && fields.UDP_PORTS !== undefined,
+      cpu_total: Number(fields.CPU_TOTAL || 0), cpu_idle: Number(fields.CPU_IDLE || 0),
+      memory_total_kb: Number(fields.MEM_TOTAL_KB || 0),
+      memory_available_kb: Number(fields.MEM_AVAILABLE_KB || 0),
+      load_1m: Number(fields.LOAD_1M || 0),
+      net_rx_bytes: Number(fields.NET_RX_BYTES || 0),
+      net_tx_bytes: Number(fields.NET_TX_BYTES || 0), elapsed_ms: Date.now() - startedAt
+    };
+  } catch (error) {
+    return { ok: false, checked_at: new Date().toISOString(), error: classifySshError(error), elapsed_ms: Date.now() - startedAt };
+  }
 }

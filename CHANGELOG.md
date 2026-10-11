@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Changed (2026-10-11)
+
+- 将内核相关运行逻辑改为 Sing-box，新增原生 inbound/outbound JSON 生成、安装、配置暂存校验与 systemd 失败回滚。
+- 部署组合改为免自有域名（Reality、IP + 自签证书、Cloudflare 临时隧道）。
+- 增加 5 秒轻量巡检、60 秒完整巡检、SSH 健康连接池、SSE 更新和 CPU / 内存 / 网络速率采样。
+- SSH 失败退避上限缩短到 30 秒，避免节点恢复后长时间显示离线。
+- 移除旧 Xray 运行配置生成器及 Xray 专属测试，新增 Sing-box 单元测试。
+- 注：本次变更未自动卸载远端旧 Xray；请按 README 的迁移步骤完成上线验证。
+
+
 ### Added
 
 - 开源协作基础设施：贡献指南、Issue/PR 模板、CI。

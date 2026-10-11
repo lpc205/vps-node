@@ -265,24 +265,24 @@ function protocolLabel(protocol) {
     trojan: 'Trojan',
     shadowsocks: 'Shadowsocks',
     socks: 'SOCKS5',
-    hysteria2: 'Hysteria2'
+    hysteria2: 'Hysteria2',
+    tuic: 'TUIC V5',
+    anytls: 'AnyTLS'
   }[protocol] || protocol;
 }
 
 const NODE_PRESETS = [
-  { id: 'vless-reality-vision', label: 'VLESS + Reality Vision', hint: '直连 · TCP + Reality + Vision', protocol: 'vless', network: 'tcp', security: 'reality', reality: true },
-  { id: 'vless-grpc-reality', label: 'VLESS + gRPC + Reality', hint: '直连 · gRPC + Reality', protocol: 'vless', network: 'grpc', security: 'reality', reality: true },
-  { id: 'vless-ws', label: 'VLESS + WebSocket', hint: 'Argo 隧道 / CDN', protocol: 'vless', network: 'ws', security: 'none', tunnel: true },
-  { id: 'vmess-ws', label: 'VMess + WebSocket', hint: 'Argo 隧道 / CDN', protocol: 'vmess', network: 'ws', security: 'none', tunnel: true },
-  { id: 'trojan-ws', label: 'Trojan + WebSocket', hint: 'Argo 隧道 / CDN', protocol: 'trojan', network: 'ws', security: 'none', tunnel: true },
-  { id: 'shadowsocks-ws', label: 'Shadowsocks + WebSocket', hint: 'Argo 隧道 / CDN', protocol: 'shadowsocks', network: 'ws', security: 'none', tunnel: true },
-  { id: 'vless-xhttp-cdn', label: 'VLESS + XHTTP (CDN)', hint: 'Argo 隧道 / CDN', protocol: 'vless', network: 'xhttp', security: 'none', tunnel: true },
-  { id: 'vless-xhttp-h2-reality', label: 'VLESS + XHTTP H2 + Reality', hint: '直连 · XHTTP + H2 + Reality', protocol: 'vless', network: 'xhttp', security: 'reality', reality: true },
-  { id: 'vless-xhttp-h3-direct', label: 'VLESS + XHTTP H3 (自签)', hint: '直连 · HTTP/3 + 自签证书', protocol: 'vless', network: 'xhttp', security: 'tls', selfSigned: true },
-  { id: 'hysteria2', label: 'Hysteria2', hint: '直连 · UDP + 自签证书', protocol: 'hysteria2', network: 'tcp', security: 'tls', selfSigned: true },
-  { id: 'trojan-direct', label: 'Trojan Direct', hint: '直连 · 自签证书', protocol: 'trojan', network: 'tcp', security: 'tls', selfSigned: true },
-  { id: 'ss2022-direct', label: 'Shadowsocks 2022 Direct', hint: '直连 · SS2022 原生加密', protocol: 'shadowsocks', network: 'tcp', security: 'none' },
-  { id: 'socks5', label: 'SOCKS5', hint: '出站代理', protocol: 'socks', network: 'tcp', security: 'none', outboundOnly: true }
+  { id: 'vless-reality-vision', label: 'VLESS + Reality Vision', hint: '无需自有域名 · TCP + Reality', protocol: 'vless', network: 'tcp', security: 'reality' },
+  { id: 'vless-grpc-reality', label: 'VLESS + gRPC + Reality', hint: '无需自有域名 · gRPC + Reality', protocol: 'vless', network: 'grpc', security: 'reality' },
+  { id: 'vless-http-reality', label: 'VLESS + HTTP + Reality', hint: '无需自有域名 · HTTP + Reality', protocol: 'vless', network: 'http', security: 'reality' },
+  { id: 'hysteria2', label: 'Hysteria2', hint: 'IP 直连 · UDP + 自动自签证书', protocol: 'hysteria2', network: 'tcp', security: 'tls', selfSigned: true },
+  { id: 'tuic', label: 'TUIC V5', hint: 'IP 直连 · UDP + 自动自签证书', protocol: 'tuic', network: 'tcp', security: 'tls', selfSigned: true },
+  { id: 'anytls', label: 'AnyTLS', hint: 'IP 直连 · TLS + 自动自签证书', protocol: 'anytls', network: 'tcp', security: 'tls', selfSigned: true },
+  { id: 'trojan', label: 'Trojan Direct', hint: 'IP 直连 · TLS + 自动自签证书', protocol: 'trojan', network: 'tcp', security: 'tls', selfSigned: true },
+  { id: 'shadowsocks', label: 'Shadowsocks', hint: '无需自有域名 · IP 直连', protocol: 'shadowsocks', network: 'tcp', security: 'none' },
+  { id: 'vless-ws-argo', label: 'VLESS + WebSocket + Argo', hint: '自动获取临时域名 · 隧道断线可能换域名', protocol: 'vless', network: 'ws', security: 'none', tunnel: true },
+  { id: 'vmess-ws-argo', label: 'VMess + WebSocket + Argo', hint: '自动获取临时域名 · 隧道断线可能换域名', protocol: 'vmess', network: 'ws', security: 'none', tunnel: true },
+  { id: 'socks5', label: 'SOCKS5（出口）', hint: '只用于远程代理出口', protocol: 'socks', network: 'tcp', security: 'none', outboundOnly: true }
 ];
 
 function presetById(id) {
@@ -339,10 +339,10 @@ function nodeLiveState(serverItem, node) {
 }
 
 const REPAIR_SUMMARIES = {
-  service_stopped: '仅启动/重启 Xray 服务，不写入或覆盖 config.json',
-  config_missing: '重新生成 config.json 并写入服务器，然后重启 Xray',
-  config_mismatch: '用面板期望配置覆盖 config.json，然后重启 Xray',
-  binary_missing: '重新下载并安装 Xray 二进制，写入配置后重启',
+  service_stopped: '仅启动/重启 Sing-box 服务，不写入或覆盖 config.json',
+  config_missing: '重新生成 config.json 并写入服务器，然后重启 Sing-box',
+  config_mismatch: '用面板期望配置覆盖 config.json，然后重启 Sing-box',
+  binary_missing: '重新下载并安装 Sing-box 二进制，写入配置后重启',
   tunnel_down: '重新安装/启动 nginx 与 cloudflared，并刷新隧道域名'
 };
 
@@ -460,6 +460,8 @@ async function loadAll() {
 }
 
 async function loadStatus() {
+  if (loadStatus.pending) return;
+  loadStatus.pending = true;
   try {
     const payload = await api('/api/status');
     const hadStatuses = Object.keys(state.statuses).length > 0;
@@ -482,7 +484,7 @@ async function loadStatus() {
     renderServers({ motion });
     renderNodes({ motion });
     refreshIcons();
-  } catch { /* keep last known status on transient errors */ }
+  } catch { /* keep last known status on transient errors */ } finally { loadStatus.pending = false; }
 }
 
 function renderAll({ motion = true } = {}) {
@@ -563,6 +565,7 @@ function renderServers({ motion = true } = {}) {
           <h3 title="${escapeHtml(server.name)}">${escapeHtml(server.name)}</h3>
           <div class="card-head-badges">
             ${badge('SSH')}
+            ${live?.metrics ? `<span class="hint" title="最近资源采样">CPU ${live.metrics.cpu_percent ?? '—'}% · 内存 ${live.metrics.memory_total_kb ? Math.round(100 * live.metrics.memory_used_kb / live.metrics.memory_total_kb) : '—'}% · ↑ ${live.metrics.upload_bytes_per_sec === null ? '—' : Math.round(live.metrics.upload_bytes_per_sec / 1024)} KB/s · ↓ ${live.metrics.download_bytes_per_sec === null ? '—' : Math.round(live.metrics.download_bytes_per_sec / 1024)} KB/s</span>` : ''}
             ${statusBadge}
           </div>
         </div>
@@ -591,9 +594,9 @@ function renderServers({ motion = true } = {}) {
         </div>
         <div class="card-actions">
           ${drift ? `<button class="btn sm danger" data-action="repair" data-id="${escapeHtml(server.id)}" data-drift="${escapeHtml(drift)}" title="${escapeHtml(repairActionLabel(drift))}"><i data-lucide="wrench"></i>${escapeHtml(repairActionLabel(drift))}</button>` : ''}
-          <button class="btn sm" data-action="status" data-id="${escapeHtml(server.id)}" title="实时检查 SSH、Xray 与配置状态"><i data-lucide="activity"></i>状态</button>
+          <button class="btn sm" data-action="status" data-id="${escapeHtml(server.id)}" title="实时检查 SSH、Sing-box 与配置状态"><i data-lucide="activity"></i>状态</button>
           <button class="btn sm" data-action="terminal" data-id="${escapeHtml(server.id)}" title="打开 SSH 终端 (T)"><i data-lucide="terminal"></i>终端</button>
-          <button class="btn sm" data-action="logs" data-id="${escapeHtml(server.id)}" title="查看 Xray 日志"><i data-lucide="scroll-text"></i>日志</button>
+          <button class="btn sm" data-action="logs" data-id="${escapeHtml(server.id)}" title="查看 Sing-box 日志"><i data-lucide="scroll-text"></i>日志</button>
           <button class="btn sm ghost" data-action="edit" data-id="${escapeHtml(server.id)}" title="编辑服务器配置"><i data-lucide="pencil"></i>编辑</button>
           <button class="icon-btn" data-action="delete" data-id="${escapeHtml(server.id)}" title="删除" aria-label="删除"><i data-lucide="trash-2"></i></button>
         </div>
@@ -722,7 +725,7 @@ function renderNodes({ motion = true } = {}) {
                   <strong>${escapeHtml(serverLabel)}</strong>
                   <span class="hint">${serverNodes.length} 个${title}节点</span>
                 </div>
-                ${server ? `<button class="btn sm accent" data-deploy-server="${escapeHtml(server.id)}" title="写入该服务器的全部节点配置并重启 Xray"><i data-lucide="upload-cloud"></i>部署</button>` : ''}
+                ${server ? `<button class="btn sm accent" data-deploy-server="${escapeHtml(server.id)}" title="写入该服务器的全部节点配置并重启 Sing-box"><i data-lucide="upload-cloud"></i>部署</button>` : ''}
               </div>
             `).join('')}
           </div>
@@ -1424,7 +1427,7 @@ function openNodeModal(serverId, node = null) {
             <div class="field" style="display:none">
               <label>传输</label>
               <select name="network">
-                ${['tcp', 'ws', 'grpc', 'httpupgrade', 'xhttp'].map((item) => `
+                ${['tcp', 'ws', 'grpc', 'http'].map((item) => `
                   <option value="${item}" ${network === item ? 'selected' : ''}>${escapeHtml(item.toUpperCase())}</option>
                 `).join('')}
               </select>
@@ -1525,7 +1528,7 @@ function openNodeModal(serverId, node = null) {
         <div class="modal-foot">
           <button class="btn ghost" data-close>取消</button>
           <button class="btn primary" type="submit" form="node-form" id="save-node-btn" title="仅保存节点配置"><i data-lucide="save"></i>保存</button>
-          <button class="btn accent" type="submit" form="node-form" id="save-deploy-node-btn" title="保存节点并写入服务器配置后重启 Xray"><i data-lucide="upload-cloud"></i>保存并部署</button>
+          <button class="btn accent" type="submit" form="node-form" id="save-deploy-node-btn" title="保存节点并写入服务器配置后重启 Sing-box"><i data-lucide="upload-cloud"></i>保存并部署</button>
         </div>
       </div>
     </div>
@@ -1535,6 +1538,7 @@ function openNodeModal(serverId, node = null) {
     const isSocks = protocol === 'socks';
     const isSs = protocol === 'shadowsocks';
     const isHy2 = protocol === 'hysteria2';
+    const isAutoTLS = ['hysteria2', 'tuic', 'anytls', 'trojan'].includes(protocol);
     const network = $('select[name="network"]')?.value || 'tcp';
     let security = $('select[name="security"]')?.value || 'none';
     const networkField = $('select[name="network"]').closest('.field');
@@ -1561,7 +1565,7 @@ function openNodeModal(serverId, node = null) {
       $$(selector).forEach((field) => { field.style.display = 'none'; });
     });
 
-    if (isHy2) {
+    if (isAutoTLS) {
       $('select[name="network"]').value = 'tcp';
       $('select[name="security"]').value = 'tls';
       sniField.style.display = '';
@@ -1617,7 +1621,7 @@ function openNodeModal(serverId, node = null) {
       return;
     }
 
-    const tunnelable = ['ws', 'xhttp'].includes(network);
+    const tunnelable = ['vless', 'vmess'].includes(protocol) && network === 'ws';
     if (tunnelField && tunnelable) tunnelField.style.display = '';
     if (tunnelCheckbox && !tunnelable) tunnelCheckbox.checked = false;
     if (xhttpField) xhttpField.style.display = network === 'xhttp' ? '' : 'none';
@@ -1718,7 +1722,7 @@ function openNodeModal(serverId, node = null) {
   const tunnelCheckboxEl = $('input[name="tunnel"]');
   if (tunnelCheckboxEl) {
     tunnelCheckboxEl.addEventListener('change', () => {
-      applyProtocolVisibility(protocolSelect.value);
+      applyProtocolVisibility(presetById($('#node-preset-select')?.value).protocol);
     });
   }
 
@@ -1747,7 +1751,7 @@ function openNodeModal(serverId, node = null) {
       data.key_file = '';
       data.self_signed = false;
     }
-    if (data.protocol === 'hysteria2') {
+    if (['hysteria2', 'tuic', 'anytls', 'trojan'].includes(data.protocol)) {
       data.network = 'tcp';
       data.security = 'tls';
       data.self_signed = true;
@@ -1977,7 +1981,7 @@ async function createSelectedRoute() {
     if (outboundNode.server_id !== inboundNode.server_id) {
       updateProgress('正在检查出站服务器...');
       const outboundStatus = await api(`/api/servers/${outboundNode.server_id}/status`).catch(() => null);
-      const outboundActive = ['active', 'started'].includes(outboundStatus?.xray?.active);
+      const outboundActive = ['active', 'started'].includes(outboundStatus?.singbox?.active);
       if (!outboundActive) {
         updateProgress('正在部署出站服务器...');
         await deployServerWithProgress(outboundNode.server_id, '连接路由 · 部署出站');
@@ -2286,17 +2290,17 @@ function openStatusModal(server, status) {
   if (!server) return;
   const nodes = state.nodes.filter((node) => node.server_id === server.id);
   const sshOk = Boolean(status?.ssh?.connected);
-  const xrayRunning = Boolean(status?.xray?.running);
-  const xrayInstalled = status?.xray?.installed === true;
+  const singboxRunning = Boolean(status?.singbox?.running);
+  const singboxInstalled = status?.singbox?.installed === true;
   const config = status?.config;
   const sshBadge = sshOk
     ? badge('已连接', 'green')
     : badge('连接失败', 'red', status?.ssh?.error || '');
-  const xrayBadge = !status?.xray?.bin_present
+  const singboxBadge = !status?.singbox?.bin_present
     ? badge('二进制缺失', 'red')
-    : !xrayInstalled
+    : !singboxInstalled
       ? badge('未安装', 'red')
-      : xrayRunning
+      : singboxRunning
         ? badge('运行中', 'green')
         : badge('服务停止', 'amber');
   const configBadge = !config?.exists
@@ -2327,7 +2331,7 @@ function openStatusModal(server, status) {
         const nodeStatus = status?.nodes?.find((item) => item.id === node.id);
         let stateBadge;
         if (!sshOk || !status) stateBadge = badge('未检查', '');
-        else if (!xrayRunning) stateBadge = badge('服务停止', 'amber');
+        else if (!singboxRunning) stateBadge = badge('服务停止', 'amber');
         else if (!nodeStatus?.in_config) stateBadge = badge('配置缺失', 'red');
         else if (!nodeStatus?.listening) stateBadge = badge('端口未监听', 'red');
         else stateBadge = badge('监听正常', 'green');
@@ -2369,8 +2373,8 @@ function openStatusModal(server, status) {
               <span class="status-summary-value">${sshBadge}</span>
             </div>
             <div class="status-summary-item">
-              <span class="status-summary-label">Xray 服务</span>
-              <span class="status-summary-value">${xrayBadge}</span>
+              <span class="status-summary-label">Sing-box 服务</span>
+              <span class="status-summary-value">${singboxBadge}</span>
             </div>
             <div class="status-summary-item">
               <span class="status-summary-label">配置文件</span>
@@ -2538,7 +2542,7 @@ async function runServerAction(action, serverId, button) {
       openConfirmModal({
         title: '删除服务器',
         message: [
-          '将通过 SSH 停止并卸载「' + (server?.name || '') + '」上的 Xray 服务、配置和面板安装的二进制文件。',
+          '将通过 SSH 停止并卸载「' + (server?.name || '') + '」上的 Sing-box 服务、配置和面板安装的二进制文件。',
           '同时删除面板中的服务器配置、节点和路由。此操作不可撤销。'
         ],
         confirmText: '卸载并删除',
@@ -2608,7 +2612,7 @@ async function runNodeAction(action, nodeId, button) {
       title: '删除节点',
       message: [
         `将删除面板中的节点「${node.name}」配置。`,
-        '不影响服务器上已部署的 Xray，重新部署服务器后该入站才会被移除。'
+        '不影响服务器上已部署的 Sing-box，重新部署服务器后该入站才会被移除。'
       ],
       confirmText: '删除',
       onConfirm: async () => {
@@ -2649,7 +2653,7 @@ function wireEvents() {
       const titles = {
         overview: ['总览', 'SSH 远程节点管理'],
         servers: ['服务器', 'SSH 连接与远程部署'],
-        nodes: ['节点', 'Xray 入站配置'],
+        nodes: ['节点', 'Sing-box 入站配置'],
         routes: ['路由', '入站与出站链路']
       };
       const [title, subtitle] = titles[item.dataset.view];
@@ -2802,4 +2806,17 @@ function wireEvents() {
 
 wireEvents();
 loadAll();
-setInterval(loadStatus, 20000);
+// SSE delivers push updates; periodic polling is the fallback when disconnected.
+let statusPushTimer = null;
+if (typeof EventSource !== 'undefined') {
+  const stream = new EventSource('/api/status/events');
+  stream.addEventListener('status', () => {
+    clearTimeout(statusPushTimer);
+    statusPushTimer = setTimeout(loadStatus, 120);
+  });
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) loadStatus();
+});
+window.addEventListener('online', loadStatus);
+setInterval(loadStatus, 15000);

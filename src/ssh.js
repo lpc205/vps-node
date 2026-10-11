@@ -72,7 +72,8 @@ export function sshExec(server, command, { stdin = null, timeout = 45000 } = {})
 }
 
 export function runScript(server, script, options = {}) {
-  return sshExec(server, 'sh -s', { ...options, stdin: script });
+  const { reuse, ...settings } = options;
+  return reuse ? sshExecPooled(server, 'sh -s', { ...settings, stdin: script }) : sshExec(server, 'sh -s', { ...settings, stdin: script });
 }
 
 export function runSudo(server, script, options = {}) {
@@ -101,4 +102,97 @@ export async function runChecked(runner) {
     throw error;
   }
   return result;
+}
+
+const pooledConnections = new Map();
+const POOL_IDLE_MS = 90_000;
+
+function dropPooledConnection(key, entry) {
+  if (pooledConnections.get(key) !== entry) return;
+  pooledConnections.delete(key);
+  clearTimeout(entry.idle);
+  try { entry.conn.end(); } catch { /* connection already gone */ }
+}
+
+// Reuse one SSH transport per managed server while allowing concurrent exec
+// channels. This is only used by non-mutating health checks.
+function getPooledConnection(server) {
+  const key = String(server.id || `${server.host}:${server.port}:${server.username}`);
+  const existing = pooledConnections.get(key);
+  if (existing) return existing.promise;
+  const conn = new Client();
+  const entry = { conn, idle: null, promise: null };
+  entry.promise = new Promise((resolve, reject) => {
+    let ready = false;
+    const connectionTimeout = setTimeout(() => {
+      if (!ready) {
+        dropPooledConnection(key, entry);
+        reject(new Error('SSH health connection timed out'));
+      }
+    }, 6000);
+    const onError = (error) => {
+      if (!ready) {
+        clearTimeout(connectionTimeout);
+        reject(error);
+      }
+      dropPooledConnection(key, entry);
+    };
+    conn.once('ready', () => {
+      ready = true;
+      clearTimeout(connectionTimeout);
+      resolve({ key, entry });
+    });
+    conn.on('error', onError);
+    conn.on('close', () => onError(new Error('SSH health connection closed')));
+    try {
+      conn.connect({ ...sshConnectOptions(server), readyTimeout: 5000, keepaliveInterval: 15000 });
+    } catch (error) {
+      onError(error);
+    }
+  });
+  pooledConnections.set(key, entry);
+  return entry.promise;
+}
+
+export async function sshExecPooled(server, command, { stdin = null, timeout = 8000 } = {}) {
+  const { key, entry } = await getPooledConnection(server);
+  clearTimeout(entry.idle);
+  const touchIdle = () => {
+    clearTimeout(entry.idle);
+    entry.idle = setTimeout(() => dropPooledConnection(key, entry), POOL_IDLE_MS);
+    entry.idle.unref?.();
+  };
+  try {
+    return await new Promise((resolve, reject) => {
+      let done = false;
+      let stdout = '';
+      let stderr = '';
+      const finish = (error, result) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        entry.conn.off('close', onClose);
+        if (error) reject(error);
+        else resolve(result);
+      };
+      const onClose = () => finish(new Error('SSH health connection closed'));
+      const timer = setTimeout(() => {
+        dropPooledConnection(key, entry);
+        finish(new Error('SSH health command timed out'));
+      }, timeout);
+      entry.conn.once('close', onClose);
+      entry.conn.exec(command, (error, stream) => {
+        if (error) return finish(error);
+        stream.on('data', (chunk) => { stdout += chunk.toString(); });
+        stream.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        stream.on('error', (error) => finish(error));
+        stream.on('close', (code) => finish(null, { code, stdout, stderr }));
+        if (stdin !== null) {
+          stream.stdin.end(stdin);
+        }
+      });
+    });
+  } finally {
+    if (pooledConnections.get(key) === entry) touchIdle();
+  }
 }

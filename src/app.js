@@ -35,17 +35,18 @@ import {
 import {
   classifySshError,
   deployServer,
-  installXray,
+  installSingbox,
   probeServer,
-  restartXray,
-  uninstallXray,
-  xrayLogs,
-  xrayStatus
+  restartSingbox,
+  uninstallSingbox,
+  singboxLogs,
+  singboxStatus
 } from './remote.js';
-import { deriveServerState, getStatusIntervalSeconds } from './status.js';
+import { deriveServerState, getStatusIntervalSeconds, getLiveMetrics } from './status.js';
+import { subscribeStatusChanges } from './status-events.js';
 import { deriveDriftType } from './status.js';
 import { performRepair, routesForServer } from './repair.js';
-import { generateRealityKeypair, nodeLinks } from './xray.js';
+import { generateRealityKeypair, nodeLinks } from './singbox.js';
 import { needsSelfSignedCert, tunnelRequired, uninstallTunnel } from './argo.js';
 import {
   buildSubscriptionNodes,
@@ -60,18 +61,18 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 
 const DRIFT_REASONS = {
-  service_stopped: 'Xray 服务未运行',
+  service_stopped: 'Sing-box 服务未运行',
   config_missing: 'config.json 不存在',
   config_mismatch: 'config.json 与面板期望不一致',
-  binary_missing: '/usr/local/bin/xray 不存在',
+  binary_missing: '/usr/local/bin/singbox 不存在',
   tunnel_down: 'Argo 隧道（cloudflared）未运行或未安装'
 };
 
 const DEPLOY_STEP_LABELS = {
   certificate: '生成自签证书',
-  'install-xray': '安装 / 检查 Xray',
-  'write-config': '写入 Xray 配置',
-  'restart-xray': '重启 Xray 服务',
+  'install-singbox': '安装 / 检查 Sing-box',
+  'write-config': '写入 Sing-box 配置',
+  'restart-singbox': '重启 Sing-box 服务',
   nginx: '安装并配置 Nginx 反代',
   cloudflared: '安装并启动 cloudflared',
   'tunnel-domain': '获取临时隧道域名',
@@ -84,7 +85,7 @@ function deployStepPlan(nodes) {
   const enabled = nodes.filter((node) => node.enabled !== 0 && node.enabled !== false);
   const ids = [];
   if (needsSelfSignedCert(enabled)) ids.push('certificate');
-  ids.push('install-xray', 'write-config', 'restart-xray');
+  ids.push('install-singbox', 'write-config', 'restart-singbox');
   if (tunnelRequired(null, enabled)) ids.push('nginx', 'cloudflared', 'tunnel-domain');
   ids.push('status');
   return ids.map((id) => ({ id, label: DEPLOY_STEP_LABELS[id], state: 'pending' }));
@@ -227,6 +228,30 @@ app.get('/api/stats', (req, res) => {
   res.json(getStats());
 });
 
+app.get('/api/status/events', (req, res) => {
+  res.status(200);
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.flushHeaders?.();
+  res.write('retry: 1500\n\n');
+  const send = (serverId) => {
+    if (!res.destroyed) res.write(`event: status\ndata: ${JSON.stringify({ server_id: serverId })}\n\n`);
+  };
+  const unsubscribe = subscribeStatusChanges(send);
+  const timer = setInterval(() => {
+    if (!res.destroyed) res.write(': keepalive\n\n');
+  }, 15000);
+  timer.unref?.();
+  req.on('close', () => {
+    clearInterval(timer);
+    unsubscribe();
+  });
+});
+
 app.get('/api/status', (req, res) => {
   const statusRows = new Map(listServerStatuses().map((row) => [row.server_id, row]));
   const servers = listServers().map((server) => {
@@ -251,6 +276,7 @@ app.get('/api/status', (req, res) => {
       drift,
       drift_reason: drift ? DRIFT_REASONS[drift] : null,
       status: cachedFields || null,
+      metrics: getLiveMetrics(server.id),
       nodes
     };
   });
@@ -293,7 +319,7 @@ app.delete('/api/servers/:id', asyncHandler(async (req, res) => {
       if (listNodes(server.id).some((node) => node.tunnel === 1)) {
         await uninstallTunnel(server);
       }
-      await uninstallXray(server);
+      await uninstallSingbox(server);
     } catch (err) {
       const classified = classifySshError(err);
       return res.status(400).json({
@@ -317,19 +343,19 @@ app.post('/api/servers/:id/test', asyncHandler(async (req, res) => {
 app.get('/api/servers/:id/status', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
-  res.json(await xrayStatus(server, listNodes(req.params.id)));
+  res.json(await singboxStatus(server, listNodes(req.params.id)));
 }));
 
 app.post('/api/servers/:id/install', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
-  res.json(await installXray(server, { force: req.body?.force === true }));
+  res.json(await installSingbox(server, { force: req.body?.force === true }));
 }));
 
 app.post('/api/servers/:id/restart', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
-  res.json(await restartXray(server));
+  res.json(await restartSingbox(server));
 }));
 
 app.post('/api/servers/:id/x25519', asyncHandler(async (req, res) => {
@@ -486,7 +512,7 @@ app.get('/api/servers/:id/logs', asyncHandler(async (req, res) => {
   const server = getServerRecord(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
   const lines = Number(req.query.lines || 100);
-  res.json(await xrayLogs(server, lines));
+  res.json(await singboxLogs(server, lines));
 }));
 
 app.get('/api/servers/:id/nodes', (req, res) => {
